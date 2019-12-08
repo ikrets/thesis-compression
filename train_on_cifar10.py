@@ -1,6 +1,4 @@
 import tensorflow as tf
-import numpy as np
-import cv2
 import coolname
 import argparse
 import math
@@ -9,6 +7,7 @@ from models.resnet18 import resnet18
 from weight_decay_optimizers import SGDW
 import tensorflow.keras.backend as K
 from datasets.cifar10 import pipeline
+from experiment import save_experiment_params
 
 tfk = tf.keras
 
@@ -44,12 +43,12 @@ class LRandWDScheduler(tfk.callbacks.Callback):
 data_train = Path(args.dataset) / 'train'
 data_train = list(data_train.glob('**/*.png'))
 train_len = len(data_train)
-data_train = pipeline(data_train, train=True, batch_size=args.batch_size, num_parallel_calls=8)
+data_train = pipeline(data_train, flip=True, crop=True, batch_size=args.batch_size, num_parallel_calls=8)
 
 data_test = Path(args.dataset) / 'test'
 data_test = list(data_test.glob('**/*.png'))
 test_len = len(data_test)
-data_test = pipeline(data_test, train=False, batch_size=args.batch_size, num_parallel_calls=8)
+data_test = pipeline(data_test, flip=False, crop=False, batch_size=args.batch_size, num_parallel_calls=8)
 
 input = tfk.layers.Input(shape=[32, 32, 3])
 model = resnet18(input)
@@ -68,13 +67,15 @@ def schedule(epoch):
 
 
 lr_and_wd_scheduler = LRandWDScheduler(multiplier_schedule=schedule,
-                                       base_lr=0.1,
-                                       base_wd=5e-4)
+                                       base_lr=args.base_lr,
+                                       base_wd=args.base_wd)
 log_dir = f'{args.experiment_dir}/{coolname.generate_slug()}'
 
 tensorboard_callback = tfk.callbacks.TensorBoard(profile_batch=0,
                                                  log_dir=log_dir)
 Path(log_dir).mkdir(parents=True, exist_ok=True)
+save_experiment_params(log_dir, args)
+
 model.save(log_dir + '/model.hdf5',
            include_optimizer=False)
 model.fit(data_train,

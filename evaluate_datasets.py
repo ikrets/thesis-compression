@@ -27,7 +27,7 @@ model.compile('sgd', loss='categorical_crossentropy', metrics=['categorical_accu
 rows = []
 for dataset in tqdm(args.dataset):
     files = list(Path(dataset).glob('**/*.png'))
-    data_test = pipeline(files, train=False, batch_size=args.batch_size, num_parallel_calls=8)
+    data_test = pipeline(files, flip=False, crop=False, batch_size=args.batch_size, num_parallel_calls=8)
     result = model.evaluate(data_test, steps=math.ceil(len(files) / args.batch_size))
     rows.append({'model': args.model, 'dataset': dataset, 'categorical_accuracy': result[1]})
 

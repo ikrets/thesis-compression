@@ -38,10 +38,12 @@ import sys
 from absl import app
 from absl.flags import argparse_flags
 import numpy as np
+import math
 from coolname import generate_slug
 import tensorflow.compat.v1 as tf
 from pathlib import Path
 from tqdm import tqdm
+from experiment import save_experiment_params
 
 import tensorflow_compression as tfc
 import datasets.cifar10
@@ -152,83 +154,108 @@ def train(args):
     # Create input data pipeline.
     with tf.device("/cpu:0"):
         dataset = Path(args.dataset)
-        train_dataset = datasets.cifar10.pipeline(filenames=list((dataset / 'train').glob('**/*.png')),
+        train_filenames = list((dataset / 'train').glob('**/*.png'))
+        train_dataset = datasets.cifar10.pipeline(filenames=train_filenames,
                                                   flip=True,
                                                   crop=False,
                                                   batch_size=args.batchsize,
                                                   num_parallel_calls=8)
-        val_dataset = datasets.cifar10.pipeline(filenames=list((dataset / 'test').glob('**/*.png')),
+        train_steps = math.ceil(len(train_filenames) / args.batchsize)
+        val_filenames = list((dataset / 'test').glob('**/*.png'))
+        val_dataset = datasets.cifar10.pipeline(filenames=val_filenames,
                                                 flip=False,
                                                 crop=False,
                                                 batch_size=args.batchsize,
                                                 num_parallel_calls=8)
+        val_steps = math.ceil(len(val_filenames) / args.batchsize)
 
     num_pixels = args.batchsize * 32 * 32
-
-    # Get training patch from dataset.
-    normalized_x, label = train_dataset.make_one_shot_iterator().get_next()
-    x = datasets.cifar10.normalize(normalized_x, inverse=True)
 
     # Instantiate model.
     analysis_transform = AnalysisTransform(args.num_filters)
     synthesis_transform = SynthesisTransform(args.num_filters)
     entropy_bottleneck = tfc.EntropyBottleneck()
 
-    # Build autoencoder and hyperprior.
-    y = analysis_transform(x)
-    y_tilde, y_likelihoods = entropy_bottleneck(y, training=True)
-    x_tilde = synthesis_transform(y_tilde)
-    normalized_x_tilde = datasets.cifar10.normalize(x_tilde)
-
-    # Total number of bits divided by number of pixels.
-    train_bpp = tf.reduce_sum(tf.log(y_likelihoods)) / (-np.log(2) * num_pixels)
-
-    # Mean squared error across pixels.
-    train_mse = tf.reduce_mean(tf.squared_difference(x, x_tilde))
-
     # Minimize loss and auxiliary loss, and execute update op.
     step = tf.train.create_global_step()
-    main_optimizer = tf.train.AdamOptimizer(learning_rate=1e-4)
+    main_lr = tf.Variable(args.main_lr[0])
+    aux_lr = tf.Variable(args.aux_lr[0])
+    main_optimizer = tf.train.AdamOptimizer(learning_rate=main_lr)
     main_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(main_optimizer)
 
-    aux_optimizer = tf.train.AdamOptimizer(learning_rate=1e-3)
+    aux_optimizer = tf.train.AdamOptimizer(learning_rate=aux_lr)
     aux_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(aux_optimizer)
 
     model = tf.keras.models.load_model(args.model)
     if args.model_weights:
         model.load_weights(args.model_weights)
-    model = tf.keras.Model(inputs=model.input, outputs=model.get_layer(args.perceptual_loss_layer).output)
+    perceptual_layer = tf.keras.Model(inputs=model.input, outputs=model.get_layer(args.perceptual_loss_layer).output)
 
-    train_perceptual_loss = tf.reduce_mean(tf.squared_difference(model(normalized_x), model(normalized_x_tilde)))
-    # Multiply by 255^2 to correct for rescaling.
-    train_reconstruction_loss = (1 - args.perceptual_loss_alpha) * train_mse
-    train_reconstruction_loss += args.perceptual_loss_alpha * train_perceptual_loss
-    train_reconstruction_loss *= 255 ** 2
+    def losses(dataset, training=True):
+        # Get training patch from dataset.
+        normalized_x, label = dataset.make_one_shot_iterator().get_next()
+        x = datasets.cifar10.normalize(normalized_x, inverse=True)
+        y = analysis_transform(x)
+        y_tilde, y_likelihoods = entropy_bottleneck(y, training=training)
+        x_tilde = synthesis_transform(y_tilde)
+        normalized_x_tilde = datasets.cifar10.normalize(x_tilde)
 
-    # The rate-distortion cost.
-    train_loss = args.lmbda * train_reconstruction_loss + train_bpp
+        bpp = tf.reduce_sum(tf.log(y_likelihoods)) / (-np.log(2) * num_pixels)
 
-    aux_step = aux_optimizer.minimize(entropy_bottleneck.losses[0])
-    filtered_variables = [v for v in tf.global_variables() if v not in model.trainable_variables]
-    main_step = main_optimizer.minimize(train_loss, global_step=step, var_list=filtered_variables)
+        # Mean squared error across pixels.
+        mse = tf.reduce_mean(tf.squared_difference(x, x_tilde))
+
+        perceptual = tf.reduce_mean(
+            tf.squared_difference(perceptual_layer(normalized_x), perceptual_layer(normalized_x_tilde)))
+        # Multiply by 255^2 to correct for rescaling.
+        reconstruction = (1 - args.perceptual_loss_alpha) * mse
+        reconstruction += args.perceptual_loss_alpha * perceptual
+        reconstruction *= 255 ** 2
+
+        psnr = tf.reduce_mean(tf.image.psnr(x, x_tilde, max_val=1.))
+
+        # The rate-distortion cost.
+        total = args.lmbda * reconstruction + bpp
+
+        prediction = model(normalized_x_tilde)
+        prediction = tf.argmax(prediction, axis=-1)
+        label = tf.argmax(label, axis=-1)
+        correct = tf.cast(tf.equal(prediction, label), tf.float32)
+        num_samples = tf.cast(tf.shape(prediction)[0], tf.float32)
+
+        accuracy = tf.reduce_mean(tf.reduce_sum(correct) / num_samples)
+
+        return {'total': total,
+                'bpp': bpp,
+                'mse': mse,
+                'perceptual': perceptual,
+                'reconstruction': reconstruction,
+                'metric_psnr': psnr,
+                'accuracy': accuracy}
+
+    train_losses = losses(train_dataset)
+    val_losses = losses(val_dataset, training=False)
+
+    filtered_variables = [v for v in tf.global_variables() if v not in model.variables]
+    aux_step = aux_optimizer.minimize(entropy_bottleneck.losses[0], var_list=filtered_variables)
+    main_step = main_optimizer.minimize(train_losses['total'], global_step=step, var_list=filtered_variables)
     optimizer_variables = main_optimizer.variables() + main_optimizer._optimizer.variables()
     optimizer_variables += aux_optimizer.variables() + aux_optimizer._optimizer.variables()
 
-    tf.summary.scalar("loss", train_loss)
-    tf.summary.scalar("bpp", train_bpp)
-    tf.summary.scalar("mse", train_mse)
-    tf.summary.scalar("perceptual_loss", train_perceptual_loss)
-    tf.summary.scalar("reconstruction_loss", train_reconstruction_loss)
+    scalar_summary_op = tf.summary.merge(
+        [tf.summary.scalar(k, v) for k, v in train_losses.items()] + [tf.summary.scalar('main_lr', main_lr),
+                                                                      tf.summary.scalar('aux_lr', aux_lr)])
 
-    tf.summary.image("original", quantize_image(x))
-    tf.summary.image("reconstruction", quantize_image(x_tilde))
+    # tf.summary.image("original", quantize_image(x))
+    # tf.summary.image("reconstruction", quantize_image(x_tilde))
 
     train_op = tf.group(main_step, aux_step, entropy_bottleneck.updates[0])
 
     checkpoint_path = Path(args.checkpoint_dir) / generate_slug()
     checkpoint_path.mkdir(parents=True, exist_ok=True)
-    with (checkpoint_path / 'parameters.json').open('w') as fp:
-        json.dump(vars(args), fp, indent=4)
+
+    save_experiment_params(checkpoint_path, args)
+
     checkpoint = tf.train.Checkpoint(analysis_transform=analysis_transform,
                                      synthesis_transform=synthesis_transform,
                                      entropy_bottleneck=entropy_bottleneck)
@@ -236,19 +263,41 @@ def train(args):
     sess = tf.keras.backend.get_session()
     sess.run(tf.variables_initializer(filtered_variables + optimizer_variables))
     sess.run(tf.local_variables_initializer())
-    writer = tf.summary.FileWriter(str(checkpoint_path), session=sess)
-    summary_op = tf.summary.merge_all()
+    tf.keras.backend.set_learning_phase(0)
 
-    for step in range(args.last_step):
-        if step % args.summary_period == 0:
-            results = sess.run([train_op, summary_op])
-            writer.add_summary(results[-1], global_step=step)
-        else:
-            sess.run(train_op)
+    train_writer = tf.summary.FileWriter(str(checkpoint_path / 'train'), session=sess)
+    val_writer = tf.summary.FileWriter(str(checkpoint_path / 'val'), session=sess)
 
-        if step % args.checkpoint_period == 0:
+    def scalar_summary(name, value):
+        return tf.summary.Summary(value=[tf.summary.Summary.Value(tag=name, simple_value=value)])
+
+    for epoch in range(args.epochs):
+        if epoch in args.lr_boundaries:
+            index = args.lr_boundaries.index(epoch)
+            sess.run([tf.assign(main_lr, args.main_lr[index + 1]),
+                      tf.assign(aux_lr, args.aux_lr[index + 1])])
+
+        for epoch_step in range(train_steps):
+            _, summaries, current_step = sess.run([train_op, scalar_summary_op, step])
+            train_writer.add_summary(summaries, global_step=current_step)
+
+        if epoch % args.checkpoint_period == 0:
             checkpoint.save(str(checkpoint_path / 'checkpoint'),
                             session=sess)
+
+        if epoch % args.validation_period == 0:
+            acc = {}
+
+            for val_step in range(val_steps):
+                losses = sess.run(val_losses)
+                for k, v in losses.items():
+                    if k not in acc:
+                        acc[k] = v
+                    else:
+                        acc[k] += v
+
+            for k, v in acc.items():
+                val_writer.add_summary(scalar_summary(k, v / val_steps), global_step=current_step)
 
 
 def compress(args):
@@ -334,7 +383,11 @@ def parse_args(argv):
     train_cmd.add_argument(
         "--lambda", type=float, default=0.01, dest="lmbda",
         help="Lambda for rate-distortion tradeoff.")
-    train_cmd.add_argument('--summary_period', type=int, required=True)
+    train_cmd.add_argument('--lr_boundaries', type=int, nargs='+', required=True)
+    train_cmd.add_argument('--main_lr', type=float, nargs='+', required=True)
+    train_cmd.add_argument('--aux_lr', type=float, nargs='+', required=True)
+    train_cmd.add_argument('--epochs', type=int, required=True)
+    train_cmd.add_argument('--validation_period', type=int, required=True)
     train_cmd.add_argument('--checkpoint_period', type=int, default=1000)
     train_cmd.add_argument('--dataset', type=str, required=True)
     train_cmd.add_argument('--model', type=str)
