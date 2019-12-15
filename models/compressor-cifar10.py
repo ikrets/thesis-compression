@@ -40,10 +40,11 @@ from absl.flags import argparse_flags
 import numpy as np
 import math
 from coolname import generate_slug
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 from pathlib import Path
 from tqdm import tqdm
 from experiment import save_experiment_params
+from tensorboard.plugins.hparams import api as hp
 
 import tensorflow_compression as tfc
 import datasets.cifar10
@@ -80,29 +81,22 @@ def write_png(filename, image):
 class AnalysisTransform(tf.keras.layers.Layer):
     """The analysis transform."""
 
-    def __init__(self, num_filters, *args, **kwargs):
+    def __init__(self, num_filters, kernel_size, steps, *args, **kwargs):
         self.num_filters = num_filters
+        self.kernel_size = kernel_size
+        self.steps = steps
         super(AnalysisTransform, self).__init__(*args, **kwargs)
 
     def build(self, input_shape):
-        self._layers = [
-            tfc.SignalConv2D(
-                self.num_filters, (5, 5), name="layer_0", corr=True, strides_down=2,
-                padding="same_zeros", use_bias=True,
-                activation=tfc.GDN(name="gdn_0")),
-            tfc.SignalConv2D(
-                self.num_filters, (5, 5), name="layer_1", corr=True, strides_down=2,
-                padding="same_zeros", use_bias=True,
-                activation=tfc.GDN(name="gdn_1")),
-            tfc.SignalConv2D(
-                self.num_filters, (5, 5), name="layer_2", corr=True, strides_down=2,
-                padding="same_zeros", use_bias=True,
-                activation=tfc.GDN(name="gdn_2")),
-            tfc.SignalConv2D(
-                self.num_filters, (5, 5), name="layer_3", corr=True, strides_down=2,
-                padding="same_zeros", use_bias=True,
-                activation=tfc.GDN(name="gdn_3"))
-        ]
+        self._layers = []
+        for i in range(self.steps):
+            last_layer = i == self.steps - 1
+            self._layers.append(
+                tfc.SignalConv2D(
+                    self.num_filters, self.kernel_size, name=f"layer_{i}", corr=True, strides_down=2,
+                    padding="same_zeros", use_bias=True,
+                    activation=tfc.GDN(name=f"gdn_{i}") if not last_layer else None))
+
         super(AnalysisTransform, self).build(input_shape)
 
     def call(self, tensor):
@@ -114,30 +108,77 @@ class AnalysisTransform(tf.keras.layers.Layer):
 class SynthesisTransform(tf.keras.layers.Layer):
     """The synthesis transform."""
 
+    def __init__(self, num_filters, kernel_size, steps, *args, **kwargs):
+        self.num_filters = num_filters
+        self.kernel_size = kernel_size
+        self.steps = steps
+
+        super(SynthesisTransform, self).__init__(*args, **kwargs)
+
+    def build(self, input_shape):
+        self._layers = []
+
+        for i in range(self.steps):
+            last_layer = i == self.steps - 1
+            self._layers.append(tfc.SignalConv2D(
+                self.num_filters if not last_layer else 3,
+                self.kernel_size, name=f"layer_{i}", corr=False, strides_up=2,
+                padding="same_zeros", use_bias=True,
+                activation=tfc.GDN(name=f"igdn_{i}", inverse=True) if not last_layer else None))
+
+        super(SynthesisTransform, self).build(input_shape)
+
+    def call(self, tensor):
+        for layer in self._layers:
+            tensor = layer(tensor)
+        return tensor
+
+
+class HyperAnalysisTransform(tf.keras.layers.Layer):
+    """The analysis transform for the entropy model parameters."""
+
     def __init__(self, num_filters, *args, **kwargs):
         self.num_filters = num_filters
-        super(SynthesisTransform, self).__init__(*args, **kwargs)
+        super(HyperAnalysisTransform, self).__init__(*args, **kwargs)
 
     def build(self, input_shape):
         self._layers = [
             tfc.SignalConv2D(
-                self.num_filters, (5, 5), name="layer_0", corr=False, strides_up=2,
+                self.num_filters, (3, 3), name="layer_0", corr=True, strides_down=1,
                 padding="same_zeros", use_bias=True,
-                activation=tfc.GDN(name="igdn_0", inverse=True)),
+                activation=tf.nn.relu),
             tfc.SignalConv2D(
-                self.num_filters, (5, 5), name="layer_1", corr=False, strides_up=2,
-                padding="same_zeros", use_bias=True,
-                activation=tfc.GDN(name="igdn_1", inverse=True)),
-            tfc.SignalConv2D(
-                self.num_filters, (5, 5), name="layer_2", corr=False, strides_up=2,
-                padding="same_zeros", use_bias=True,
-                activation=tfc.GDN(name="igdn_2", inverse=True)),
-            tfc.SignalConv2D(
-                3, (5, 5), name="layer_3", corr=False, strides_up=2,
-                padding="same_zeros", use_bias=True,
+                self.num_filters, (3, 3), name="layer_1", corr=True, strides_down=2,
+                padding="same_zeros", use_bias=False,
                 activation=None),
         ]
-        super(SynthesisTransform, self).build(input_shape)
+        super(HyperAnalysisTransform, self).build(input_shape)
+
+    def call(self, tensor):
+        for layer in self._layers:
+            tensor = layer(tensor)
+        return tensor
+
+
+class HyperSynthesisTransform(tf.keras.layers.Layer):
+    """The synthesis transform for the entropy model parameters."""
+
+    def __init__(self, num_filters, *args, **kwargs):
+        self.num_filters = num_filters
+        super(HyperSynthesisTransform, self).__init__(*args, **kwargs)
+
+    def build(self, input_shape):
+        self._layers = [
+            tfc.SignalConv2D(
+                self.num_filters, (3, 3), name="layer_0", corr=False, strides_up=2,
+                padding="same_zeros", use_bias=True, kernel_parameterizer=None,
+                activation=tf.nn.relu),
+            tfc.SignalConv2D(
+                self.num_filters, (3, 3), name="layer_1", corr=False, strides_up=1,
+                padding="same_zeros", use_bias=True, kernel_parameterizer=None,
+                activation=None),
+        ]
+        super(HyperSynthesisTransform, self).build(input_shape)
 
     def call(self, tensor):
         for layer in self._layers:
@@ -171,9 +212,22 @@ def train(args):
 
     num_pixels = args.batchsize * 32 * 32
 
+    hparams = {
+        'filters': args.num_filters,
+        'steps': 4,
+        'kernel_size': 5,
+        'downstream_loss_layer': args.downstream_loss_layer,
+        'downstream_loss_alpha': args.downstream_loss_alpha,
+        'downstream_loss_type': args.downstream_loss_type,
+        'scale_hyperprior': False
+    }
     # Instantiate model.
-    analysis_transform = AnalysisTransform(args.num_filters)
-    synthesis_transform = SynthesisTransform(args.num_filters)
+    analysis_transform = AnalysisTransform(hparams['filters'], steps=hparams['steps'],
+                                           kernel_size=hparams['kernel_size'])
+    synthesis_transform = SynthesisTransform(hparams['filters'], steps=hparams['steps'],
+                                             kernel_size=hparams['kernel_size'])
+    hyper_analysis_transform = HyperAnalysisTransform(args.num_filters)
+    hyper_synthesis_transform = HyperSynthesisTransform(args.num_filters)
     entropy_bottleneck = tfc.EntropyBottleneck()
 
     # Minimize loss and auxiliary loss, and execute update op.
@@ -189,27 +243,49 @@ def train(args):
     model = tf.keras.models.load_model(args.model)
     if args.model_weights:
         model.load_weights(args.model_weights)
-    perceptual_layer = tf.keras.Model(inputs=model.input, outputs=model.get_layer(args.perceptual_loss_layer).output)
+    downstream_layer = tf.keras.Model(inputs=model.input, outputs=model.get_layer(args.downstream_loss_layer).output)
 
     def losses(dataset, training=True):
         # Get training patch from dataset.
         normalized_x, label = dataset.make_one_shot_iterator().get_next()
         x = datasets.cifar10.normalize(normalized_x, inverse=True)
-        y = analysis_transform(x)
-        y_tilde, y_likelihoods = entropy_bottleneck(y, training=training)
-        x_tilde = synthesis_transform(y_tilde)
-        normalized_x_tilde = datasets.cifar10.normalize(x_tilde)
 
-        bpp = tf.reduce_sum(tf.log(y_likelihoods)) / (-np.log(2) * num_pixels)
+        y = analysis_transform(x)
+        if not hparams['scale_hyperprior']:
+            y_tilde, y_likelihoods = entropy_bottleneck(y, training=training)
+            x_tilde = synthesis_transform(y_tilde)
+            normalized_x_tilde = datasets.cifar10.normalize(x_tilde)
+
+            bpp = tf.reduce_sum(tf.log(y_likelihoods)) / (-np.log(2) * num_pixels)
+        else:
+            z = hyper_analysis_transform(abs(y))
+            z_tilde, z_likelihoods = entropy_bottleneck(z, training=training)
+
+            sigma = hyper_synthesis_transform(z_tilde)
+            scale_table = np.exp(np.linspace(
+                np.log(SCALES_MIN), np.log(SCALES_MAX), SCALES_LEVELS))
+            conditional_bottleneck = tfc.GaussianConditional(sigma, scale_table)
+            y_tilde, y_likelihoods = conditional_bottleneck(y, training=training)
+            x_tilde = synthesis_transform(y_tilde)
+            normalized_x_tilde = datasets.cifar10.normalize(x_tilde)
+
+            bpp = (tf.reduce_sum(tf.log(y_likelihoods)) + tf.reduce_sum(tf.log(z_likelihoods))) / (
+                        -np.log(2) * num_pixels)
 
         # Mean squared error across pixels.
         mse = tf.reduce_mean(tf.squared_difference(x, x_tilde))
 
-        perceptual = tf.reduce_mean(
-            tf.squared_difference(perceptual_layer(normalized_x), perceptual_layer(normalized_x_tilde)))
+        if hparams['downstream_loss_type'] == 'mse':
+            downstream_loss = lambda X_compressed, X: tf.reduce_mean(tf.squared_difference(X_compressed, X))
+        if hparams['downstream_loss_type'] == 'kld':
+            downstream_loss = lambda X_compressed, X: tf.reduce_mean(
+                tf.keras.losses.categorical_crossentropy(X_compressed, X))
+
+        downstream = downstream_loss(X_compressed=downstream_layer(normalized_x_tilde),
+                                     X=downstream_layer(normalized_x))
         # Multiply by 255^2 to correct for rescaling.
-        reconstruction = (1 - args.perceptual_loss_alpha) * mse
-        reconstruction += args.perceptual_loss_alpha * perceptual
+        reconstruction = (1 - args.downstream_loss_alpha) * mse
+        reconstruction += args.downstream_loss_alpha * downstream
         reconstruction *= 255 ** 2
 
         psnr = tf.reduce_mean(tf.image.psnr(x, x_tilde, max_val=1.))
@@ -228,7 +304,7 @@ def train(args):
         return {'total': total,
                 'bpp': bpp,
                 'mse': mse,
-                'perceptual': perceptual,
+                'downstream': downstream,
                 'reconstruction': reconstruction,
                 'metric_psnr': psnr,
                 'accuracy': accuracy}
@@ -251,8 +327,15 @@ def train(args):
 
     train_op = tf.group(main_step, aux_step, entropy_bottleneck.updates[0])
 
-    checkpoint_path = Path(args.checkpoint_dir) / generate_slug()
+    slug = generate_slug()
+    checkpoint_path = Path(args.checkpoint_dir) / slug
     checkpoint_path.mkdir(parents=True, exist_ok=True)
+
+    sess = tf.keras.backend.get_session()
+    with tf.compat.v2.summary.create_file_writer(str(checkpoint_path)).as_default() as w:
+        sess.run(w.init())
+        sess.run(hp.hparams(hparams, trial_id=slug))
+        sess.run(w.flush())
 
     save_experiment_params(checkpoint_path, args)
 
@@ -392,8 +475,9 @@ def parse_args(argv):
     train_cmd.add_argument('--dataset', type=str, required=True)
     train_cmd.add_argument('--model', type=str)
     train_cmd.add_argument('--model_weights', type=str)
-    train_cmd.add_argument('--perceptual_loss_layer', type=str)
-    train_cmd.add_argument('--perceptual_loss_alpha', type=float)
+    train_cmd.add_argument('--downstream_loss_layer', type=str)
+    train_cmd.add_argument('--downstream_loss_alpha', type=float)
+    train_cmd.add_argument('--downstream_loss_type', choices=['kld', 'mse'], required=True)
     train_cmd.add_argument(
         "--last_step", type=int, default=1000000,
         help="Train up to this number of steps.")
