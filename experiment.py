@@ -12,4 +12,4 @@ def save_experiment_params(log_dir, args):
         json.dump(params, fp, indent=4)
 
     with (log_dir / 'patch').open('w') as fp:
-        fp.write(subprocess.run('git diff', shell=True, stdout=subprocess.PIPE).stdout.decode('ascii'))
+        fp.write(subprocess.run('git diff', shell=True, stdout=subprocess.PIPE).stdout.decode('utf8'))
