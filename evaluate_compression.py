@@ -6,7 +6,6 @@ import pandas as pd
 import cv2
 import numpy as np
 from skimage.measure import compare_psnr
-from datasets.cifar10 import pipeline
 from tqdm import tqdm
 
 parser = argparse.ArgumentParser()

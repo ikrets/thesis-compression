@@ -35,7 +35,7 @@ class Logger(object):
 
         im_summaries = []
         # Write the image to a string
-        _, img_string = cv2.imencode('.png', img[..., ::-1])
+        _, img_string = cv2.imencode('.png', img)
 
         # Create an Image object
         img_sum = tf.Summary.Image(encoded_image_string=img_string.tobytes(),
@@ -100,4 +100,3 @@ class Logger(object):
         # Create and write Summary
         summary = tf.Summary(value=[tf.Summary.Value(tag=tag, histo=hist)])
         self.writer.add_summary(summary, step)
-        self.writer.flush()

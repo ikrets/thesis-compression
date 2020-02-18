@@ -1,9 +1,12 @@
 import copy
 import numpy as np
 from pathlib import Path
+import matplotlib.pyplot as plt
+import pandas as pd
 
 from visualization.tensorboard_logging import Logger
 from visualization.tensorboard import original_reconstruction_comparison
+from visualization.plots import rate_distortion_curve, figure_to_numpy
 
 import tensorflow.compat.v1 as tf
 import tensorflow_compression as tfc
@@ -55,31 +58,45 @@ class FiLM(tfkl.Layer):
 class AnalysisTransform(tfkl.Layer):
     """The analysis transform."""
 
-    def __init__(self, num_filters, depth, use_FiLM, FiLM_depth=None, FiLM_width=None, FiLM_activation=None, *args,
+    def __init__(self, num_filters, depth, num_postproc, use_FiLM, FiLM_depth=None, FiLM_width=None,
+                 FiLM_activation=None, *args,
                  **kwargs):
         super(AnalysisTransform, self).__init__(*args, **kwargs)
 
         self.num_filters = num_filters
         self.depth = depth
-
-        self.convs = [
-            tfc.SignalConv2D(
-                self.num_filters, (5, 5), name=f"layer_{i}", corr=True, strides_down=2,
-                padding="same_zeros", use_bias=True,
-                activation=tfc.GDN(name=f"gdn_{i}")) for i in range(self.depth)]
+        self.num_postproc = num_postproc
 
         self.use_FiLM = use_FiLM
-        if self.use_FiLM:
-            if not FiLM_width or not FiLM_depth or not FiLM_activation:
-                raise ValueError('If use_FiLM is set, other FiLM parameters must be set too!')
+        self.FiLM_width = FiLM_width
+        self.FiLM_depth = FiLM_depth
+        self.FiLM_activation = FiLM_activation
+        if self.use_FiLM and not FiLM_width or not FiLM_depth or not FiLM_activation:
+            raise ValueError('If use_FiLM is set, other FiLM parameters must be set too!')
 
-            self.FiLM_width = FiLM_width
-            self.FiLM_depth = FiLM_depth
-            self.FiLM_activation = FiLM_activation
+        self.layers = []
+        for i in range(self.depth):
+            self.layers.append(tfc.SignalConv2D(
+                self.num_filters,
+                (5, 5), name=f"layer_{i}", corr=True, strides_down=2,
+                padding="same_zeros", use_bias=True,
+                activation=None))
+            if i != self.depth - 1 or self.num_postproc:
+                if self.use_FiLM:
+                    self.layers.append(FiLM(width=self.FiLM_width, depth=self.FiLM_depth,
+                                            activation=self.FiLM_activation,
+                                            name=f'layer_{i}_film'))
+                self.layers.append(tfc.GDN(name=f'gdn_{i}'))
 
-            self.films = [FiLM(width=self.FiLM_width, depth=self.FiLM_depth,
-                               activation=self.FiLM_activation if i != self.depth - 1 else None,
-                               name=f'layer_{i}_film') for i in range(self.depth)]
+            for j in range(self.num_postproc):
+                self.layers.append(tfc.SignalConv2D(self.num_filters, (5, 5), name=f'layer_{i}_postproc_{j}',
+                                                    corr=True, padding='same_zeros', use_bias=True, activation=None))
+                if self.use_FiLM:
+                    self.layers.append(FiLM(width=self.FiLM_width, depth=self.FiLM_depth,
+                                            activation=self.FiLM_activation,
+                                            name=f'layer_{i}_postproc_{j}_film'))
+                if j != self.num_postproc - 1 or i != self.depth - 1:
+                    self.layers.append(tfc.GDN(name=f'gdn_{i}_postproc_{j}'))
 
     def build(self, input_shape):
         if not self.use_FiLM:
@@ -87,11 +104,11 @@ class AnalysisTransform(tfkl.Layer):
         else:
             parameters_shape, feature_maps_shape = input_shape
 
-        for i in range(self.depth):
-            feature_maps_shape = self.convs[i].compute_output_shape(feature_maps_shape)
-
-            if self.use_FiLM:
-                feature_maps_shape = self.films[i].compute_output_shape([parameters_shape, feature_maps_shape])
+        for layer in self.layers:
+            if isinstance(layer, FiLM):
+                feature_maps_shape = layer.compute_output_shape([parameters_shape, feature_maps_shape])
+            else:
+                feature_maps_shape = layer.compute_output_shape(feature_maps_shape)
 
     def call(self, input_tensor):
         if not self.use_FiLM:
@@ -99,10 +116,11 @@ class AnalysisTransform(tfkl.Layer):
         else:
             parameters, feature_maps = input_tensor
 
-        for i in range(self.depth):
-            feature_maps = self.convs[i](feature_maps)
-            if self.use_FiLM:
-                feature_maps = self.films[i]([parameters, feature_maps])
+        for layer in self.layers:
+            if isinstance(layer, FiLM):
+                feature_maps = layer([parameters, feature_maps])
+            else:
+                feature_maps = layer(feature_maps)
 
         return feature_maps
 
@@ -110,46 +128,61 @@ class AnalysisTransform(tfkl.Layer):
 class SynthesisTransform(tfkl.Layer):
     """The synthesis transform."""
 
-    def __init__(self, num_filters, depth, use_FiLM, FiLM_depth=None, FiLM_width=None, FiLM_activation=None, *args,
+    def __init__(self, num_filters, depth, num_postproc, use_FiLM, FiLM_depth=None, FiLM_width=None,
+                 FiLM_activation=None, *args,
                  **kwargs):
         super(SynthesisTransform, self).__init__(*args, **kwargs)
 
         self.num_filters = num_filters
         self.depth = depth
+        self.num_postproc = num_postproc
         self.use_FiLM = use_FiLM
+        if not FiLM_width or not FiLM_depth or not FiLM_activation:
+            raise ValueError('If use_FiLM is set, other FiLM parameters must be set too!')
 
-        self.convs = [
-            tfc.SignalConv2D(
-                self.num_filters if i != self.depth - 1 else 3, (5, 5), name=f"layer_{i}", corr=False, strides_up=2,
+        self.FiLM_width = FiLM_width
+        self.FiLM_depth = FiLM_depth
+        self.FiLM_activation = FiLM_activation
+
+        self.layers = []
+        for i in range(self.depth):
+            self.layers.append(tfc.SignalConv2D(
+                self.num_filters if i != self.depth - 1 or self.num_postproc else 3, (5, 5), name=f"layer_{i}",
+                corr=False,
+                strides_up=2,
                 padding="same_zeros", use_bias=True,
-                activation=tfc.GDN(name=f"igdn_{i}" if i != self.depth - 1 else None, inverse=True))
-            for i in range(self.depth)
-        ]
+                activation=None))
+            if i != self.depth - 1 or self.num_postproc:
+                if self.use_FiLM:
+                    self.layers.append(FiLM(width=self.FiLM_width, depth=self.FiLM_depth,
+                                            activation=self.FiLM_activation,
+                                            name=f'layer_{i}_film'))
+                self.layers.append(tfc.GDN(name=f'igdn_{i}', inverse=True))
 
-        if self.use_FiLM:
-            if not FiLM_width or not FiLM_depth or not FiLM_activation:
-                raise ValueError('If use_FiLM is set, other FiLM parameters must be set too!')
+            for j in range(self.num_postproc):
+                self.layers.append(
+                    tfc.SignalConv2D(self.num_filters if i != self.depth - 1 or j != self.num_postproc - 1 else 3,
+                                     (5, 5), name=f'layer_{i}_postproc_{j}',
+                                     corr=False, padding='same_zeros', use_bias=True, activation=None))
+                if self.use_FiLM:
+                    self.layers.append(FiLM(width=self.FiLM_width, depth=self.FiLM_depth,
+                                            activation=self.FiLM_activation,
+                                            name=f'layer_{i}_postproc_{j}_film'))
 
-            self.FiLM_width = FiLM_width
-            self.FiLM_depth = FiLM_depth
-            self.FiLM_activation = FiLM_activation
-
-            self.films = [
-                FiLM(width=self.FiLM_width, depth=self.FiLM_depth,
-                     activation=self.FiLM_activation if i != self.depth - 1 else None,
-                     name=f'layer_{i}_film')
-                for i in range(self.depth)]
+                if j != self.num_postproc - 1 or i != self.depth - 1:
+                    self.layers.append(tfc.GDN(name=f'igdn_{i}_postproc_{j}', inverse=True))
 
     def build(self, input_shape):
-        if self.use_FiLM:
-            parameters_shape, feature_maps_shape = input_shape
-        else:
+        if not self.use_FiLM:
             feature_maps_shape = input_shape
+        else:
+            parameters_shape, feature_maps_shape = input_shape
 
-        for i in range(self.depth):
-            feature_maps_shape = self.convs[i].compute_output_shape(feature_maps_shape)
-            if self.use_FiLM:
-                feature_maps_shape = self.films[i].compute_output_shape([parameters_shape, feature_maps_shape])
+        for layer in self.layers:
+            if isinstance(layer, FiLM):
+                feature_maps_shape = layer.compute_output_shape([parameters_shape, feature_maps_shape])
+            else:
+                feature_maps_shape = layer.compute_output_shape(feature_maps_shape)
 
     def call(self, input_tensor):
         if not self.use_FiLM:
@@ -157,32 +190,41 @@ class SynthesisTransform(tfkl.Layer):
         else:
             parameters, feature_maps = input_tensor
 
-        for i in range(self.depth):
-            feature_maps = self.convs[i](feature_maps)
-            if self.use_FiLM:
-                feature_maps = self.films[i]([parameters, feature_maps])
+        for layer in self.layers:
+            if isinstance(layer, FiLM):
+                feature_maps = layer([parameters, feature_maps])
+            else:
+                feature_maps = layer(feature_maps)
 
         return feature_maps
 
 
 class SimpleFiLMCompressor(tfk.Model):
-    def __init__(self, num_filters, depth, FiLM_depth, FiLM_width, FiLM_activation, **kwargs):
+    def __init__(self, num_filters, depth, num_postproc, FiLM_depth, FiLM_width, FiLM_activation, **kwargs):
         super(SimpleFiLMCompressor, self).__init__(**kwargs)
 
-        self.analysis_transform = AnalysisTransform(num_filters, depth, use_FiLM=True, FiLM_depth=FiLM_depth,
+        self.analysis_transform = AnalysisTransform(num_filters, depth, num_postproc, use_FiLM=True,
+                                                    FiLM_depth=FiLM_depth,
                                                     FiLM_width=FiLM_width, FiLM_activation=FiLM_activation)
-        self.synthesis_transform = SynthesisTransform(num_filters, depth, use_FiLM=True, FiLM_depth=FiLM_depth,
+        self.synthesis_transform = SynthesisTransform(num_filters, depth, num_postproc, use_FiLM=True,
+                                                      FiLM_depth=FiLM_depth,
                                                       FiLM_width=FiLM_width, FiLM_activation=FiLM_activation)
         self.entropy_bottleneck = tfc.EntropyBottleneck()
 
-    def forward(self, parameters, X, training):
-        Y = self.analysis_transform([parameters, X])
+    def forward(self, item, training, run_range_coder=False):
+        parameters = tf.stack([item['alpha'], item['lambda']], axis=-1)
+        Y = self.analysis_transform([parameters, item['X']])
         Y_tilde, Y_likelihoods = self.entropy_bottleneck(Y, training=training)
         X_tilde = self.synthesis_transform([parameters, Y_tilde])
 
-        return {'Y_tilde': Y_tilde,
-                'Y_likelihoods': Y_likelihoods,
-                'X_tilde': X_tilde}
+        results = {'Y_tilde': Y_tilde,
+                   'Y_likelihoods': Y_likelihoods,
+                   'X_tilde': X_tilde}
+
+        if run_range_coder:
+            results['Y_compressed'] = self.entropy_bottleneck.compress(Y)
+
+        return results
 
 
 def bits_per_pixel(Y_likelihoods, X_shape):
@@ -197,10 +239,11 @@ class CompressorWithDownstreamComparison:
                  downstream_metric,
                  downstream_compressed_vs_uncompressed_layer,
                  downstream_compressed_vs_uncompressed_loss,
-                 reverse_normalize):
+                 downstream_preprocess):
         self.compressor = compressor
         self.downstream_model = downstream_model
         self.downstream_metric = downstream_metric
+        self.downstream_preprocess = downstream_preprocess
 
         downstream_compressed_vs_uncompressed_layer = self.downstream_model.get_layer(
             downstream_compressed_vs_uncompressed_layer)
@@ -209,7 +252,6 @@ class CompressorWithDownstreamComparison:
                                                          downstream_compressed_vs_uncompressed_layer.output])
 
         self.downstream_compressed_vs_uncompressed_loss = downstream_compressed_vs_uncompressed_loss
-        self.reverse_normalize = reverse_normalize
 
     def set_optimizers(self, main_optimizer, aux_optimizer):
         self.main_optimizer = main_optimizer
@@ -217,32 +259,34 @@ class CompressorWithDownstreamComparison:
 
     def _get_outputs_losses_metrics(self, dataset, training):
         batch = dataset.make_one_shot_iterator().get_next()
-        stacked_parameters = tf.stack([batch['alpha'], batch['lambda']], axis=-1)
-        compressor_outputs = self.compressor.forward(parameters=stacked_parameters, X=batch['X'], training=training)
+
+        compressor_outputs = self.compressor.forward(batch, training)
+
         mse = tf.reduce_mean(tf.math.squared_difference(batch['X'], compressor_outputs['X_tilde']), axis=[1, 2, 3])
         bpp = bits_per_pixel(compressor_outputs['Y_likelihoods'], tf.shape(batch['X']))
-        psnr = tf.image.psnr(self.reverse_normalize(batch['X']),
-                             self.reverse_normalize(compressor_outputs['X_tilde']),
+        psnr = tf.image.psnr(batch['X'],
+                             tf.clip_by_value(compressor_outputs['X_tilde'], 0, 1),
                              max_val=1.)
 
-        _, uncompressed_comparison = self.downstream_model(batch['X'])
-        compressed_preds, compressed_comparison = self.downstream_model(compressor_outputs['X_tilde'])
-        downstream_comparison = self.downstream_compressed_vs_uncompressed_loss(uncompressed_comparison,
-                                                                                compressed_comparison)
+        _, uncompressed_comparison = self.downstream_model(self.downstream_preprocess(batch['X']))
+        compressed_preds, compressed_comparison = self.downstream_model(
+            self.downstream_preprocess(compressor_outputs['X_tilde']))
+        downstream_loss = self.downstream_compressed_vs_uncompressed_loss(uncompressed_comparison,
+                                                                          compressed_comparison)
         compressed_metric = self.downstream_metric(batch['label'], compressed_preds)
 
-        reconstruction_loss = (1 - batch['alpha']) * mse + batch['alpha'] * downstream_comparison
+        reconstruction_loss = (1 - batch['alpha']) * mse + batch['alpha'] * downstream_loss
         reconstruction_loss *= (255 ** 2)
 
         total = batch['lambda'] * reconstruction_loss + bpp
 
-        return {'mse': tf.reduce_mean(mse),
-                'bpp': tf.reduce_mean(bpp),
-                'reconstruction': tf.reduce_mean(reconstruction_loss),
-                'total': tf.reduce_mean(total),
-                'psnr': tf.reduce_mean(psnr),
-                'downstream_comparison': tf.reduce_mean(downstream_comparison),
-                'downstream_metric_on_compressed': tf.reduce_mean(compressed_metric),
+        return {'mse': mse,
+                'bpp': bpp,
+                'reconstruction': reconstruction_loss,
+                'total': total,
+                'psnr': psnr,
+                'downstream_loss': downstream_loss,
+                'downstream_metric': compressed_metric,
                 'X': batch['X'],
                 'alpha': batch['alpha'],
                 'lambda': batch['lambda'],
@@ -254,7 +298,8 @@ class CompressorWithDownstreamComparison:
                               'reconstruction': [],
                               'total': [],
                               'psnr': [],
-                              'downstream_comparison': [],
+                              'downstream_loss': [],
+                              'downstream_metric': [],
                               'alpha': [],
                               'lambda': []}
         self.val_metrics = copy.deepcopy(self.train_metrics)
@@ -263,7 +308,9 @@ class CompressorWithDownstreamComparison:
         metrics = self.train_metrics if training else self.val_metrics
 
         for k in metrics.keys():
-            metrics[k].append(results[k])
+            if np.any(np.isnan(results[k])):
+                raise RuntimeError('NaN encountered in ${k}!')
+            metrics[k].extend(results[k])
 
     def _log_accumulated(self, logger, epoch, training):
         metrics = self.train_metrics if training else self.val_metrics
@@ -271,34 +318,39 @@ class CompressorWithDownstreamComparison:
             if key not in ['alpha', 'lambda']:
                 logger.log_scalar(key, np.mean(value_list), step=epoch)
             else:
-                logger.log_histogram(key, np.concatenate(value_list), step=epoch)
+                logger.log_histogram(key, value_list, step=epoch)
 
     def _get_optimizer_variables(self):
         variables = []
         for opt in [self.main_optimizer, self.aux_optimizer]:
-            variables.append(opt.variables())
+            variables.extend(opt.variables())
             if hasattr(opt, '_optimizer'):
-                variables.append(opt._optimizer.variables())
+                variables.extend(opt._optimizer.variables())
 
         return variables
 
+    # TODO feed separate random parameter dataset and zip it with the train and validation sets!
     def fit(self, sess,
             dataset, dataset_steps,
-            val_dataset, val_dataset_steps,
+            random_parameter_val_dataset, val_dataset_steps,
+            const_parameter_val_datasets,
             epochs,
             log_dir,
-            log_period,
+            train_log_period,
+            val_log_period,
             checkpoint_period):
         train_outputs_losses_metrics = self._get_outputs_losses_metrics(dataset, training=True)
-        val_outputs_losses_metrics = self._get_outputs_losses_metrics(val_dataset, training=False)
+        val_outputs_losses_metrics = self._get_outputs_losses_metrics(random_parameter_val_dataset, training=False)
+
+        const_parameter_outputs = {parameters: self._get_outputs_losses_metrics(d, training=False)
+                                   for parameters, d in const_parameter_val_datasets.items()}
 
         non_downstream_variables = [v for v in tf.global_variables() if v not in self.downstream_model.variables]
 
-        main_step = self.main_optimizer.minimize(train_outputs_losses_metrics['total'],
+        main_step = self.main_optimizer.minimize(tf.reduce_mean(train_outputs_losses_metrics['total']),
                                                  var_list=non_downstream_variables)
         aux_step = self.aux_optimizer.minimize(self.compressor.entropy_bottleneck.losses[0])
-        sess.run(tf.variables_initializer(
-            non_downstream_variables + self.main_optimizer.variables() + self.aux_optimizer.variables()))
+        sess.run(tf.variables_initializer(non_downstream_variables + self._get_optimizer_variables()))
 
         train_steps = tf.group([main_step, aux_step, self.compressor.entropy_bottleneck.updates[0]])
 
@@ -310,38 +362,82 @@ class CompressorWithDownstreamComparison:
 
             for train_step in range(dataset_steps):
                 train_results, _ = sess.run([train_outputs_losses_metrics, train_steps])
-                self._accumulate(train_results, training=True)
 
-                if train_step == 0 and epoch % log_period == 0:
-                    comparison = original_reconstruction_comparison(
-                        self.reverse_normalize(train_results['X']),
-                        self.reverse_normalize(train_results['X_tilde']),
-                        size=10,
-                        alphas=train_results['alpha'],
-                        lambdas=train_results['lambda'])
-                    train_logger.log_image('original_vs_reconstruction', comparison, step=epoch)
+                if epoch % train_log_period == 0:
+                    self._accumulate(train_results, training=True)
 
-            self._log_accumulated(train_logger, epoch=epoch, training=True)
+                    if train_step == 0:
+                        comparison = original_reconstruction_comparison(
+                            train_results['X'],
+                            train_results['X_tilde'],
+                            size=10,
+                            alphas=train_results['alpha'],
+                            lambdas=train_results['lambda'])
+                        train_logger.log_image('original_vs_reconstruction', comparison, step=epoch)
 
-            for val_step in range(val_dataset_steps):
-                val_results = sess.run(val_outputs_losses_metrics)
-                self._accumulate(val_results, training=False)
-                if val_step == 0 and epoch % log_period == 0:
-                    comparison = original_reconstruction_comparison(
-                        self.reverse_normalize(val_results['X']),
-                        self.reverse_normalize(val_results['X_tilde']),
-                        size=10,
-                        alphas=val_results['alpha'],
-                        lambdas=val_results['lambda'])
-                    val_logger.log_image('original_vs_reconstruction', comparison, step=epoch)
+            if epoch % train_log_period == 0:
+                self._log_accumulated(train_logger, epoch=epoch, training=True)
 
-            self._log_accumulated(val_logger, epoch=epoch, training=False)
+            if epoch % val_log_period == 0:
+                for val_step in range(val_dataset_steps):
+                    val_results = sess.run(val_outputs_losses_metrics)
+                    self._accumulate(val_results, training=False)
+
+                    if val_step == 0:
+                        comparison = original_reconstruction_comparison(
+                            val_results['X'],
+                            val_results['X_tilde'],
+                            size=10,
+                            alphas=val_results['alpha'],
+                            lambdas=val_results['lambda'])
+                        val_logger.log_image('original_vs_reconstruction', comparison, step=epoch)
+
+                self._log_accumulated(val_logger, epoch=epoch, training=False)
+
+                evaluations = {
+                    'alpha': [],
+                    'lambda': [],
+                    'bpp': [],
+                    'psnr': [],
+                    'downstream_loss': [],
+                    'downstream_metric': []
+                }
+                for (alpha, lmbda), outputs in const_parameter_outputs.items():
+                    psnrs = []
+                    bpps = []
+                    downstream_losses = []
+                    downstream_metrics = []
+
+                    for step in range(val_dataset_steps):
+                        results = sess.run(outputs)
+                        psnrs.extend(results['psnr'])
+                        bpps.extend(results['bpp'])
+                        downstream_losses.extend(results['downstream_loss'])
+                        downstream_metrics.extend(results['downstream_metric'])
+
+                    evaluations['alpha'].append(alpha)
+                    evaluations['lambda'].append(lmbda)
+                    evaluations['bpp'].append(np.mean(bpps))
+                    evaluations['psnr'].append(np.mean(psnrs))
+                    evaluations['downstream_loss'].append(np.mean(downstream_losses))
+                    evaluations['downstream_metric'].append(np.mean(downstream_metrics))
+
+                evaluation_df = pd.DataFrame(evaluations)
+
+                plt_img = figure_to_numpy(rate_distortion_curve(evaluation_df, figsize=(12, 12),
+                                                                downstream_metrics=['downstream_loss',
+                                                                                    'downstream_metric']))
+                val_logger.log_image('parameters_rate_distortion', plt_img, step=epoch)
+                plt.close()
 
             if epoch % checkpoint_period == 0:
                 self.compressor.save_weights(str(log_dir / f'compressor_epoch_{epoch}_weights.h5'))
 
+            train_logger.writer.flush()
+            val_logger.writer.flush()
 
-def pipeline_add_parameters(dataset, alpha_range, lambda_range):
+
+def pipeline_add_sampled_parameters(dataset, alpha_range, lambda_range):
     sample_loguniform = lambda len, range: tf.math.exp(tf.random.uniform([len], minval=tf.math.log(range[0]),
                                                                          maxval=tf.math.log(range[1])))
     return dataset.map(lambda X, label: {
@@ -350,3 +446,14 @@ def pipeline_add_parameters(dataset, alpha_range, lambda_range):
         'alpha': sample_loguniform(tf.shape(X)[0], alpha_range),
         'lambda': sample_loguniform(tf.shape(X)[0], lambda_range)
     })
+
+
+def pipeline_add_constant_parameters(item, alpha, lmbda):
+    repeat = lambda value, X: tf.tile(tf.constant([value], dtype=tf.float32), multiples=(tf.shape(X)[0],))
+
+    item.update({
+        'alpha': repeat(alpha, item['X']),
+        'lambda': repeat(lmbda, item['X'])
+    })
+
+    return item
