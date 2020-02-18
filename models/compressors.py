@@ -275,14 +275,10 @@ class CompressorWithDownstreamComparison:
                                                                           compressed_comparison)
         compressed_metric = self.downstream_metric(batch['label'], compressed_preds)
 
-        reconstruction_loss = (1 - batch['alpha']) * mse + batch['alpha'] * downstream_loss
-        reconstruction_loss *= (255 ** 2)
-
-        total = batch['lambda'] * reconstruction_loss + bpp
+        total = batch['lambda'] * mse * (255 ** 2) + batch['alpha'] * downstream_loss * (255 ** 2) + bpp
 
         return {'mse': mse,
                 'bpp': bpp,
-                'reconstruction': reconstruction_loss,
                 'total': total,
                 'psnr': psnr,
                 'downstream_loss': downstream_loss,
@@ -295,7 +291,6 @@ class CompressorWithDownstreamComparison:
     def _reset_accumulators(self):
         self.train_metrics = {'mse': [],
                               'bpp': [],
-                              'reconstruction': [],
                               'total': [],
                               'psnr': [],
                               'downstream_loss': [],
