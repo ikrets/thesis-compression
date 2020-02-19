@@ -11,7 +11,7 @@ from tqdm import tqdm
 parser = argparse.ArgumentParser()
 parser.add_argument('--original_dataset', type=str, required=True)
 parser.add_argument('--compressed_dataset', type=str, nargs='+', required=True)
-parser.add_argument('--compressed_extension', choices=['bpg', 'tfci'], required=True)
+parser.add_argument('--compressed_extension', choices=['bpg', 'tfci', 'jpg'], required=True)
 parser.add_argument('--result_dataframe', type=str, required=True)
 args = parser.parse_args()
 
@@ -24,11 +24,11 @@ original_dataset = Path(args.original_dataset)
 original_files = {}
 files = list(original_dataset.glob('**/*.png'))
 for file in tqdm(files, desc='reading the original dataset'):
-    original_files[file.name] = cv2.imread(str(file))
+    original_files[file.stem] = cv2.imread(str(file))
 
 rows = []
 for dataset in tqdm(args.compressed_dataset, desc='processing compressed datasets'):
-    files = list(Path(dataset).glob('**/*.png'))
+    files = list(Path(dataset).glob(f'**/*.{"png" if args.compressed_extension != "jpg" else "jpg"}'))
 
     bpps = []
     psnrs = []
@@ -37,7 +37,7 @@ for dataset in tqdm(args.compressed_dataset, desc='processing compressed dataset
         image = cv2.imread(str(file))
         compressed_file = Path(file.parent / (str(file.stem) + f'.{args.compressed_extension}'))
         bpps.append(compressed_file.stat().st_size / image.shape[0] / image.shape[1] * 8)
-        psnrs.append(compare_psnr(original_files[file.name], image))
+        psnrs.append(compare_psnr(original_files[file.stem], image))
 
     rows.append(
         {'original_dataset': args.original_dataset, 'compressed_dataset': dataset, 'bpp': np.mean(bpps),
