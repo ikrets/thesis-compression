@@ -12,6 +12,12 @@ from models.utils import make_stepwise
 from experiment import save_experiment_params
 import datasets.cifar10
 
+sample_functions = {
+    'loguniform': lambda len, range: tf.math.exp(tf.random.uniform([len], minval=tf.math.log(range[0]),
+                                                                   maxval=tf.math.log(range[1]))),
+    'uniform': lambda len, range: tf.random.uniform([len], minval=range[0], maxval=range[1])
+}
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--num_filters', type=int, default=192)
 parser.add_argument('--depth', type=int, required=True)
@@ -23,6 +29,7 @@ parser.add_argument('--batchsize', type=int, default=128)
 parser.add_argument('--eval_batchsize', type=int, default=256)
 parser.add_argument('--lambda_range', type=float, nargs=2, required=True)
 parser.add_argument('--alpha_range', type=float, nargs=2, required=True)
+parser.add_argument('--sample_function', choices=sample_functions.keys(), required=True)
 parser.add_argument('--eval_points', type=int, default=10)
 
 parser.add_argument('--optimizer', choices=['momentum', 'adam'], required=True)
@@ -64,7 +71,8 @@ with tf.device("/cpu:0"):
                                               shuffle=True,
                                               classifier_normalize=False,
                                               num_parallel_calls=8)
-    train_dataset = pipeline_add_sampled_parameters(train_dataset, args.alpha_range, args.lambda_range)
+    train_dataset = pipeline_add_sampled_parameters(train_dataset, args.alpha_range, args.lambda_range,
+                                                    sample_fn=sample_functions[args.sample_function])
     train_steps = math.ceil(len(train_filenames) / args.batchsize)
     val_filenames = list((dataset / 'test').glob('**/*.png'))
     val_dataset = datasets.cifar10.pipeline(filenames=val_filenames,
@@ -75,7 +83,8 @@ with tf.device("/cpu:0"):
                                             classifier_normalize=False,
                                             num_parallel_calls=8)
     val_steps = math.ceil(len(val_filenames) / args.eval_batchsize)
-    random_parameters_val_dataset = pipeline_add_sampled_parameters(val_dataset, args.alpha_range, args.lambda_range)
+    random_parameters_val_dataset = pipeline_add_sampled_parameters(val_dataset, args.alpha_range, args.lambda_range,
+                                                                    sample_fn=sample_functions[args.sample_function])
 
     if args.lambda_range[0] != args.lambda_range[1]:
         lambda_eval_linspace = np.linspace(args.lambda_range[0], args.lambda_range[1], args.eval_points)

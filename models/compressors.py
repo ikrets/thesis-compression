@@ -436,14 +436,12 @@ class CompressorWithDownstreamComparison:
             val_logger.writer.flush()
 
 
-def pipeline_add_sampled_parameters(dataset, alpha_range, lambda_range):
-    sample_loguniform = lambda len, range: tf.math.exp(tf.random.uniform([len], minval=tf.math.log(range[0]),
-                                                                         maxval=tf.math.log(range[1])))
+def pipeline_add_sampled_parameters(dataset, alpha_range, lambda_range, sample_fn):
     return dataset.map(lambda X, label: {
         'X': X,
         'label': label,
-        'alpha': sample_loguniform(tf.shape(X)[0], alpha_range),
-        'lambda': sample_loguniform(tf.shape(X)[0], lambda_range)
+        'alpha': sample_fn(tf.shape(X)[0], alpha_range),
+        'lambda': sample_fn(tf.shape(X)[0], lambda_range)
     })
 
 
