@@ -3,6 +3,7 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
+from tqdm import trange, tqdm
 
 from visualization.tensorboard_logging import Logger
 from visualization.tensorboard import original_reconstruction_comparison
@@ -10,6 +11,7 @@ from visualization.plots import rate_distortion_curve, figure_to_numpy
 
 import tensorflow.compat.v1 as tf
 import tensorflow_compression as tfc
+
 
 tfk = tf.keras
 tfkl = tf.keras.layers
@@ -232,7 +234,7 @@ def bits_per_pixel(Y_likelihoods, X_shape):
     return tf.reduce_sum(tf.log(Y_likelihoods), axis=[1, 2, 3]) / (-tf.math.log(2.) * num_pixels)
 
 
-class CompressorWithDownstreamComparison:
+class CompressorWithDownstreamLoss:
     def __init__(self,
                  compressor,
                  downstream_model,
@@ -336,6 +338,9 @@ class CompressorWithDownstreamComparison:
             train_log_period,
             val_log_period,
             checkpoint_period):
+        main_lr_placeholder = tf.placeholder(dtype=tf.float32)
+        assign_lr = tf.assign(self.main_lr, main_lr_placeholder)
+
         train_outputs_losses_metrics = self._get_outputs_losses_metrics(dataset, training=True)
         val_outputs_losses_metrics = self._get_outputs_losses_metrics(random_parameter_val_dataset, training=False)
 
@@ -354,12 +359,12 @@ class CompressorWithDownstreamComparison:
         train_logger = Logger(Path(log_dir) / 'train')
         val_logger = Logger(Path(log_dir) / 'val')
 
-        for epoch in range(epochs):
+        for epoch in trange(epochs, desc='epoch'):
             self._reset_accumulators()
-            sess.run([tf.assign(self.main_lr, self.main_schedule(epoch))])
+            sess.run(assign_lr, feed_dict={main_lr_placeholder: self.main_schedule(epoch)})
             train_logger.log_scalar('main_lr', self.main_schedule(epoch), step=epoch)
 
-            for train_step in range(dataset_steps):
+            for train_step in trange(dataset_steps, desc='train batch'):
                 train_results, _ = sess.run([train_outputs_losses_metrics, train_steps])
 
                 if epoch % train_log_period == 0:
@@ -374,11 +379,11 @@ class CompressorWithDownstreamComparison:
                             lambdas=train_results['lambda'])
                         train_logger.log_image('original_vs_reconstruction', comparison, step=epoch)
 
-            if epoch % train_log_period == 0:
+            if epoch % train_log_period == 0 and epoch:
                 self._log_accumulated(train_logger, epoch=epoch, training=True)
 
-            if epoch % val_log_period == 0:
-                for val_step in range(val_dataset_steps):
+            if epoch % val_log_period == 0 and epoch:
+                for val_step in trange(val_dataset_steps, desc='val batch with random parameters'):
                     val_results = sess.run(val_outputs_losses_metrics)
                     self._accumulate(val_results, training=False)
 
@@ -401,13 +406,13 @@ class CompressorWithDownstreamComparison:
                     'downstream_loss': [],
                     'downstream_metric': []
                 }
-                for (alpha, lmbda), outputs in const_parameter_outputs.items():
+                for (alpha, lmbda), outputs in tqdm(const_parameter_outputs.items(), desc='val grid params dataset'):
                     psnrs = []
                     bpps = []
                     downstream_losses = []
                     downstream_metrics = []
 
-                    for step in range(val_dataset_steps):
+                    for _ in trange(val_dataset_steps, desc='val grid batch'):
                         results = sess.run(outputs)
                         psnrs.extend(results['psnr'])
                         bpps.extend(results['bpp'])
@@ -429,7 +434,7 @@ class CompressorWithDownstreamComparison:
                 val_logger.log_image('parameters_rate_distortion', plt_img, step=epoch)
                 plt.close()
 
-            if epoch % checkpoint_period == 0:
+            if epoch % checkpoint_period == 0 and epoch:
                 self.compressor.save_weights(str(log_dir / f'compressor_epoch_{epoch}_weights.h5'))
 
             train_logger.writer.flush()

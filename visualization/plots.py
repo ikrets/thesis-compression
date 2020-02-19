@@ -11,6 +11,7 @@ def figure_to_numpy(fig):
         fp.seek(0)
         img_arr = np.frombuffer(fp.getvalue(), dtype=np.uint8)
         img_arr = cv2.imdecode(img_arr, 1)
+        plt.close(fig)
 
     return img_arr
 

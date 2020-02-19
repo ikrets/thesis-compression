@@ -9,6 +9,7 @@ from tqdm import tqdm
 parser = argparse.ArgumentParser()
 parser.add_argument('--model', type=str, required=True)
 parser.add_argument('--weights', type=str)
+parser.add_argument('--correct_bgr', action='store_true')
 parser.add_argument('--dataset', type=str, nargs='+', required=True)
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--result_dataframe', type=str, required=True)
@@ -27,7 +28,9 @@ model.compile('sgd', loss='categorical_crossentropy', metrics=['categorical_accu
 rows = []
 for dataset in tqdm(args.dataset):
     files = list(Path(dataset).glob('**/*.png'))
-    data_test = pipeline(files, flip=False, crop=False, batch_size=args.batch_size, num_parallel_calls=8)
+    data_test = pipeline(files, flip=False, crop=False, batch_size=args.batch_size,
+                         correct_bgr=args.correct_bgr,
+                         num_parallel_calls=8)
     result = model.evaluate(data_test, steps=math.ceil(len(files) / args.batch_size))
     rows.append({'model': args.model, 'dataset': dataset, 'categorical_accuracy': result[1]})
 

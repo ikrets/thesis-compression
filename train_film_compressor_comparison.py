@@ -1,7 +1,7 @@
 import argparse
 import math
 from pathlib import Path
-from models.compressors import SimpleFiLMCompressor, CompressorWithDownstreamComparison, \
+from models.compressors import SimpleFiLMCompressor, CompressorWithDownstreamLoss, \
     pipeline_add_sampled_parameters, pipeline_add_constant_parameters
 import tensorflow.compat.v1 as tf
 import numpy as np
@@ -12,10 +12,19 @@ from models.utils import make_stepwise
 from experiment import save_experiment_params
 import datasets.cifar10
 
+
+def loguniform(len, range):
+    return tf.math.exp(tf.random.uniform([len], minval=tf.math.log(range[0]),
+                                         maxval=tf.math.log(range[1]))),
+
+
+def uniform(len, range):
+    return tf.random.uniform([len], minval=range[0], maxval=range[1])
+
+
 sample_functions = {
-    'loguniform': lambda len, range: tf.math.exp(tf.random.uniform([len], minval=tf.math.log(range[0]),
-                                                                   maxval=tf.math.log(range[1]))),
-    'uniform': lambda len, range: tf.random.uniform([len], minval=range[0], maxval=range[1])
+    'loguniform': loguniform,
+    'uniform': uniform
 }
 
 parser = argparse.ArgumentParser()
@@ -39,6 +48,7 @@ parser.add_argument('--drop_lr_epochs', type=int, nargs='+')
 parser.add_argument('--drop_lr_multiplier', type=float, default=0.5)
 
 parser.add_argument('--epochs', type=int, required=True)
+parser.add_argument('--correct_bgr', action='store_true')
 
 parser.add_argument('--train_summary_period', type=int, default=1)
 parser.add_argument('--val_summary_period', type=int, default=5)
@@ -96,9 +106,14 @@ with tf.device("/cpu:0"):
     else:
         alpha_eval_linspace = [args.alpha_range[0]]
 
-    const_parameter_val_datasets = {(alpha, lmbda): val_dataset.map(
-        lambda X, label: pipeline_add_constant_parameters({'X': X, 'label': label}, alpha, lmbda), num_parallel_calls=8)
-        for alpha in alpha_eval_linspace for lmbda in lambda_eval_linspace}
+    const_parameter_val_datasets = {}
+    for alpha in alpha_eval_linspace:
+        for lmbda in lambda_eval_linspace:
+            def add_params(X, label):
+                return pipeline_add_constant_parameters({'X': X, 'label': label}, alpha, lmbda)
+
+
+            const_parameter_val_datasets[(alpha, lmbda)] = val_dataset.map(add_params, num_parallel_calls=8)
 
 compressor = SimpleFiLMCompressor(num_filters=args.num_filters,
                                   depth=args.depth,
@@ -112,13 +127,13 @@ if args.downstream_model_weights:
 downstream_loss = lambda original, compressed: tf.reduce_mean(tf.keras.losses.mean_squared_error(original, compressed),
                                                               axis=[1, 2])
 
-compressor_with_downstream_comparison = CompressorWithDownstreamComparison(
+compressor_with_downstream_comparison = CompressorWithDownstreamLoss(
     compressor,
     downstream_model=downstream_model,
     downstream_metric=tf.keras.metrics.categorical_accuracy,
     downstream_compressed_vs_uncompressed_layer='activation_5',
     downstream_compressed_vs_uncompressed_loss=downstream_loss,
-    downstream_preprocess=datasets.cifar10.normalize)
+    downstream_preprocess=lambda X: datasets.cifar10.normalize(X[..., ::-1] if args.correct_bgr else X))
 
 if not args.drop_lr_epochs:
     main_schedule = lambda _: args.main_lr
