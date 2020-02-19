@@ -7,6 +7,8 @@ import tensorflow.compat.v1 as tf
 import numpy as np
 import coolname
 
+from models.utils import make_stepwise
+
 from experiment import save_experiment_params
 import datasets.cifar10
 
@@ -26,6 +28,8 @@ parser.add_argument('--eval_points', type=int, default=10)
 parser.add_argument('--optimizer', choices=['momentum', 'adam'], required=True)
 parser.add_argument('--main_lr', type=float, required=True)
 parser.add_argument('--aux_lr', type=float, required=True)
+parser.add_argument('--drop_lr_epochs', type=int, nargs='+')
+parser.add_argument('--drop_lr_multiplier', type=float, default=0.5)
 
 parser.add_argument('--epochs', type=int, required=True)
 
@@ -46,7 +50,8 @@ experiment_dir.mkdir(parents=True)
 save_experiment_params(experiment_dir, args)
 
 opt = tf.train.AdamOptimizer if args.optimizer == 'adam' else tf.train.MomentumOptimizer
-main_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(opt(args.main_lr))
+main_lr = tf.Variable(0.0, tf.float32)
+main_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(opt(main_lr))
 aux_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(opt(args.aux_lr))
 
 with tf.device("/cpu:0"):
@@ -106,8 +111,16 @@ compressor_with_downstream_comparison = CompressorWithDownstreamComparison(
     downstream_compressed_vs_uncompressed_loss=downstream_loss,
     downstream_preprocess=datasets.cifar10.normalize)
 
+if not args.drop_lr_epochs:
+    main_schedule = lambda _: args.main_lr
+else:
+    main_schedule = make_stepwise(args.main_lr, args.drop_lr_epochs, args.drop_lr_multiplier)
+
 compressor_with_downstream_comparison.set_optimizers(main_optimizer=main_optimizer,
-                                                     aux_optimizer=aux_optimizer)
+                                                     aux_optimizer=aux_optimizer,
+                                                     main_lr=main_lr,
+                                                     main_schedule=main_schedule)
+
 compressor_with_downstream_comparison.fit(tf.keras.backend.get_session(),
                                           train_dataset, train_steps,
                                           random_parameters_val_dataset, val_steps,

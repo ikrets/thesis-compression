@@ -253,7 +253,11 @@ class CompressorWithDownstreamComparison:
 
         self.downstream_compressed_vs_uncompressed_loss = downstream_compressed_vs_uncompressed_loss
 
-    def set_optimizers(self, main_optimizer, aux_optimizer):
+    def set_optimizers(self, main_optimizer, aux_optimizer, main_lr, main_schedule):
+        self.main_lr = main_lr
+
+        self.main_schedule = main_schedule
+
         self.main_optimizer = main_optimizer
         self.aux_optimizer = aux_optimizer
 
@@ -261,16 +265,14 @@ class CompressorWithDownstreamComparison:
         batch = dataset.make_one_shot_iterator().get_next()
 
         compressor_outputs = self.compressor.forward(batch, training)
+        clipped_X_tilde = tf.clip_by_value(compressor_outputs['X_tilde'], 0, 1)
 
-        mse = tf.reduce_mean(tf.math.squared_difference(batch['X'], compressor_outputs['X_tilde']), axis=[1, 2, 3])
+        mse = tf.reduce_mean(tf.math.squared_difference(batch['X'], clipped_X_tilde), axis=[1, 2, 3])
         bpp = bits_per_pixel(compressor_outputs['Y_likelihoods'], tf.shape(batch['X']))
-        psnr = tf.image.psnr(batch['X'],
-                             tf.clip_by_value(compressor_outputs['X_tilde'], 0, 1),
-                             max_val=1.)
+        psnr = tf.image.psnr(batch['X'], clipped_X_tilde, max_val=1.)
 
         _, uncompressed_comparison = self.downstream_model(self.downstream_preprocess(batch['X']))
-        compressed_preds, compressed_comparison = self.downstream_model(
-            self.downstream_preprocess(compressor_outputs['X_tilde']))
+        compressed_preds, compressed_comparison = self.downstream_model(self.downstream_preprocess(clipped_X_tilde))
         downstream_loss = self.downstream_compressed_vs_uncompressed_loss(uncompressed_comparison,
                                                                           compressed_comparison)
         compressed_metric = self.downstream_metric(batch['label'], compressed_preds)
@@ -286,7 +288,7 @@ class CompressorWithDownstreamComparison:
                 'X': batch['X'],
                 'alpha': batch['alpha'],
                 'lambda': batch['lambda'],
-                'X_tilde': compressor_outputs['X_tilde']}
+                'X_tilde': clipped_X_tilde}
 
     def _reset_accumulators(self):
         self.train_metrics = {'mse': [],
@@ -354,6 +356,8 @@ class CompressorWithDownstreamComparison:
 
         for epoch in range(epochs):
             self._reset_accumulators()
+            sess.run([tf.assign(self.main_lr, self.main_schedule(epoch))])
+            train_logger.log_scalar('main_lr', self.main_schedule(epoch), step=epoch)
 
             for train_step in range(dataset_steps):
                 train_results, _ = sess.run([train_outputs_losses_metrics, train_steps])
