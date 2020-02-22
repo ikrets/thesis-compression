@@ -3,6 +3,7 @@ import math
 from pathlib import Path
 from models.compressors import SimpleFiLMCompressor, CompressorWithDownstreamLoss, \
     pipeline_add_sampled_parameters, pipeline_add_constant_parameters
+import models.downstream_task
 import tensorflow.compat.v1 as tf
 import numpy as np
 import coolname
@@ -15,7 +16,7 @@ import datasets.cifar10
 
 def loguniform(len, range):
     return tf.math.exp(tf.random.uniform([len], minval=tf.math.log(range[0]),
-                                         maxval=tf.math.log(range[1]))),
+                                         maxval=tf.math.log(range[1])))
 
 
 def uniform(len, range):
@@ -25,6 +26,10 @@ def uniform(len, range):
 sample_functions = {
     'loguniform': loguniform,
     'uniform': uniform
+}
+
+model_performance_losses = {
+    'categorical_crossentropy': tf.keras.losses.categorical_crossentropy
 }
 
 parser = argparse.ArgumentParser()
@@ -54,9 +59,18 @@ parser.add_argument('--train_summary_period', type=int, default=1)
 parser.add_argument('--val_summary_period', type=int, default=5)
 parser.add_argument('--checkpoint_period', type=int, default=50)
 parser.add_argument('--dataset', type=str, required=True)
-parser.add_argument('--downstream_model', type=str)
+
+parser.add_argument('--downstream_model', type=str, required=True)
 parser.add_argument('--downstream_model_weights', type=str)
-parser.add_argument('--downstream_loss_layer', type=str)
+parser.add_argument('--last_frozen_layer', type=str, required=True)
+
+subparsers = parser.add_subparsers(dest='downstream_loss_type')
+activation_difference_cmd = subparsers.add_parser('activation_difference')
+activation_difference_cmd.add_argument('--downstream_layer', type=str)
+
+task_performance_cmd = subparsers.add_parser('task_performance')
+task_performance_cmd.add_argument('--model_performance_loss', choices=model_performance_losses.keys(),
+                                  required=True)
 
 parser.add_argument('experiment_dir', type=str)
 
@@ -124,16 +138,22 @@ compressor = SimpleFiLMCompressor(num_filters=args.num_filters,
 downstream_model = tf.keras.models.load_model(args.downstream_model)
 if args.downstream_model_weights:
     downstream_model.load_weights(args.downstream_model_weights)
-downstream_loss = lambda original, compressed: tf.reduce_mean(tf.keras.losses.mean_squared_error(original, compressed),
-                                                              axis=[1, 2])
 
-compressor_with_downstream_comparison = CompressorWithDownstreamLoss(
-    compressor,
-    downstream_model=downstream_model,
-    downstream_metric=tf.keras.metrics.categorical_accuracy,
-    downstream_compressed_vs_uncompressed_layer='activation_5',
-    downstream_compressed_vs_uncompressed_loss=downstream_loss,
-    downstream_preprocess=lambda X: datasets.cifar10.normalize(X[..., ::-1] if args.correct_bgr else X))
+common_downstream_arguments = {
+    'model': downstream_model,
+    'metric_fn': tf.keras.metrics.categorical_accuracy,
+    'preprocess_fn': lambda X: datasets.cifar10.normalize(X[..., ::-1] if args.correct_bgr else X),
+    'last_frozen_layer': args.last_frozen_layer,
+}
+if args.downstream_loss_type == 'task_performance':
+    downstream_task = models.downstream_task.DownstreamTaskPerformance(
+        model_performance_loss=tf.keras.losses.categorical_crossentropy, **common_downstream_arguments)
+if args.downstream_loss_type == 'activation_difference':
+    downstream_task = models.downstream_task.DownstreamActivationDifference(activation_layer=args.downstream_layer,
+                                                                            **common_downstream_arguments)
+
+compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
+                                                                     downstream_task)
 
 if not args.drop_lr_epochs:
     main_schedule = lambda _: args.main_lr

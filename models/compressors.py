@@ -12,7 +12,6 @@ from visualization.plots import rate_distortion_curve, figure_to_numpy
 import tensorflow.compat.v1 as tf
 import tensorflow_compression as tfc
 
-
 tfk = tf.keras
 tfkl = tf.keras.layers
 K = tf.keras.backend
@@ -237,23 +236,9 @@ def bits_per_pixel(Y_likelihoods, X_shape):
 class CompressorWithDownstreamLoss:
     def __init__(self,
                  compressor,
-                 downstream_model,
-                 downstream_metric,
-                 downstream_compressed_vs_uncompressed_layer,
-                 downstream_compressed_vs_uncompressed_loss,
-                 downstream_preprocess):
+                 downstream_task):
         self.compressor = compressor
-        self.downstream_model = downstream_model
-        self.downstream_metric = downstream_metric
-        self.downstream_preprocess = downstream_preprocess
-
-        downstream_compressed_vs_uncompressed_layer = self.downstream_model.get_layer(
-            downstream_compressed_vs_uncompressed_layer)
-        self.downstream_model = tfk.Model(
-            inputs=self.downstream_model.input, outputs=[self.downstream_model.output,
-                                                         downstream_compressed_vs_uncompressed_layer.output])
-
-        self.downstream_compressed_vs_uncompressed_loss = downstream_compressed_vs_uncompressed_loss
+        self.downstream_task = downstream_task
 
     def set_optimizers(self, main_optimizer, aux_optimizer, main_lr, main_schedule):
         self.main_lr = main_lr
@@ -273,11 +258,9 @@ class CompressorWithDownstreamLoss:
         bpp = bits_per_pixel(compressor_outputs['Y_likelihoods'], tf.shape(batch['X']))
         psnr = tf.image.psnr(batch['X'], clipped_X_tilde, max_val=1.)
 
-        _, uncompressed_comparison = self.downstream_model(self.downstream_preprocess(batch['X']))
-        compressed_preds, compressed_comparison = self.downstream_model(self.downstream_preprocess(clipped_X_tilde))
-        downstream_loss = self.downstream_compressed_vs_uncompressed_loss(uncompressed_comparison,
-                                                                          compressed_comparison)
-        compressed_metric = self.downstream_metric(batch['label'], compressed_preds)
+        downstream_loss = self.downstream_task.loss(X=batch['X'], X_reconstruction=clipped_X_tilde,
+                                                    label=batch['label'])
+        compressed_metric = self.downstream_task.metric(label=batch['label'], X_reconstruction=clipped_X_tilde)
 
         total = batch['lambda'] * mse * (255 ** 2) + batch['alpha'] * downstream_loss * (255 ** 2) + bpp
 
@@ -347,14 +330,13 @@ class CompressorWithDownstreamLoss:
         const_parameter_outputs = {parameters: self._get_outputs_losses_metrics(d, training=False)
                                    for parameters, d in const_parameter_val_datasets.items()}
 
-        non_downstream_variables = [v for v in tf.global_variables() if v not in self.downstream_model.variables]
-
+        non_frozen_variables = [v for v in tf.global_variables() if v not in self.downstream_task.frozen_variables]
+        variables_to_initialize = [v for v in tf.global_variables() if v not in self.downstream_task.model.variables]
         main_step = self.main_optimizer.minimize(tf.reduce_mean(train_outputs_losses_metrics['total']),
-                                                 var_list=non_downstream_variables)
+                                                 var_list=non_frozen_variables)
         aux_step = self.aux_optimizer.minimize(self.compressor.entropy_bottleneck.losses[0])
-        sess.run(tf.variables_initializer(non_downstream_variables + self._get_optimizer_variables()))
-
         train_steps = tf.group([main_step, aux_step, self.compressor.entropy_bottleneck.updates[0]])
+        sess.run(tf.variables_initializer(variables_to_initialize + self._get_optimizer_variables()))
 
         train_logger = Logger(Path(log_dir) / 'train')
         val_logger = Logger(Path(log_dir) / 'val')
