@@ -330,7 +330,8 @@ class CompressorWithDownstreamLoss:
         const_parameter_outputs = {parameters: self._get_outputs_losses_metrics(d, training=False)
                                    for parameters, d in const_parameter_val_datasets.items()}
 
-        non_frozen_variables = [v for v in tf.global_variables() if v not in self.downstream_task.frozen_variables]
+        non_frozen_variables = [v for v in tf.global_variables() if
+                                v not in self.downstream_task.frozen_variables(epoch=0)]
         variables_to_initialize = [v for v in tf.global_variables() if v not in self.downstream_task.model.variables]
         main_step = self.main_optimizer.minimize(tf.reduce_mean(train_outputs_losses_metrics['total']),
                                                  var_list=non_frozen_variables)
@@ -342,6 +343,17 @@ class CompressorWithDownstreamLoss:
         val_logger = Logger(Path(log_dir) / 'val')
 
         for epoch in trange(epochs, desc='epoch'):
+            if epoch == self.downstream_task.burnin_epochs:
+                non_frozen_variables = [v for v in tf.global_variables() if
+                                        v not in self.downstream_task.frozen_variables(epoch=epoch)]
+                main_step = self.main_optimizer.minimize(tf.reduce_mean(train_outputs_losses_metrics['total']),
+                                                         var_list=non_frozen_variables)
+                train_steps = tf.group([main_step, aux_step, self.compressor.entropy_bottleneck.updates[0]])
+
+                variables_to_initialize_burnin = [v for v in tf.global_variables() if
+                                                  v not in self.downstream_task.model.variables and v not in variables_to_initialize]
+                sess.run(tf.variables_initializer(variables_to_initialize_burnin))
+
             self._reset_accumulators()
             sess.run(assign_lr, feed_dict={main_lr_placeholder: self.main_schedule(epoch)})
             train_logger.log_scalar('main_lr', self.main_schedule(epoch), step=epoch)

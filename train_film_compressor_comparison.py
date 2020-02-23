@@ -63,6 +63,7 @@ parser.add_argument('--dataset', type=str, required=True)
 parser.add_argument('--downstream_model', type=str, required=True)
 parser.add_argument('--downstream_model_weights', type=str)
 parser.add_argument('--last_frozen_layer', type=str, required=True)
+parser.add_argument('--burnin_epochs', type=int, default=0)
 
 subparsers = parser.add_subparsers(dest='downstream_loss_type')
 activation_difference_cmd = subparsers.add_parser('activation_difference')
@@ -144,6 +145,7 @@ common_downstream_arguments = {
     'metric_fn': tf.keras.metrics.categorical_accuracy,
     'preprocess_fn': lambda X: datasets.cifar10.normalize(X[..., ::-1] if args.correct_bgr else X),
     'last_frozen_layer': args.last_frozen_layer,
+    'burnin_epochs': args.burnin_epochs
 }
 if args.downstream_loss_type == 'task_performance':
     downstream_task = models.downstream_task.DownstreamTaskPerformance(

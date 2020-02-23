@@ -32,7 +32,8 @@ for dataset in tqdm(args.dataset):
                          correct_bgr=args.correct_bgr,
                          num_parallel_calls=8)
     result = model.evaluate(data_test, steps=math.ceil(len(files) / args.batch_size))
-    rows.append({'model': args.model, 'dataset': dataset, 'categorical_accuracy': result[1]})
+    rows.append({'model': args.model, 'dataset': dataset, 'categorical_accuracy': result[1],
+                 'categorical_crossentropy': result[0]})
 
 df = df.append(rows, ignore_index=True)
 df.to_csv(args.result_dataframe, index=False)

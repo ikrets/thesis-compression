@@ -1,7 +1,6 @@
 import tensorflow as tf
 from pathlib import Path
 import argparse
-import math
 import pandas as pd
 import cv2
 import numpy as np
