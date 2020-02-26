@@ -212,18 +212,16 @@ class SimpleFiLMCompressor(tfk.Model):
                                                       FiLM_width=FiLM_width, FiLM_activation=FiLM_activation)
         self.entropy_bottleneck = tfc.EntropyBottleneck()
 
-    def forward(self, item, training, run_range_coder=False):
+    def forward(self, item, training):
         parameters = tf.stack([item['alpha'], item['lambda']], axis=-1)
         Y = self.analysis_transform([parameters, item['X']])
         Y_tilde, Y_likelihoods = self.entropy_bottleneck(Y, training=training)
         X_tilde = self.synthesis_transform([parameters, Y_tilde])
 
-        results = {'Y_tilde': Y_tilde,
+        results = {'Y': Y,
+                   'Y_tilde': Y_tilde,
                    'Y_likelihoods': Y_likelihoods,
                    'X_tilde': X_tilde}
-
-        if run_range_coder:
-            results['Y_compressed'] = self.entropy_bottleneck.compress(Y)
 
         return results
 
@@ -236,9 +234,13 @@ def bits_per_pixel(Y_likelihoods, X_shape):
 class CompressorWithDownstreamLoss:
     def __init__(self,
                  compressor,
-                 downstream_task):
+                 downstream_task,
+                 alpha_burnin=False,
+                 min_max_bpp=None):
         self.compressor = compressor
         self.downstream_task = downstream_task
+        self.alpha_burnin = alpha_burnin
+        self.min_max_bpp = min_max_bpp
 
     def set_optimizers(self, main_optimizer, aux_optimizer, main_lr, main_schedule):
         self.main_lr = main_lr
@@ -248,7 +250,7 @@ class CompressorWithDownstreamLoss:
         self.main_optimizer = main_optimizer
         self.aux_optimizer = aux_optimizer
 
-    def _get_outputs_losses_metrics(self, dataset, training):
+    def _get_outputs_losses_metrics(self, dataset, training, alpha_multiplier):
         batch = dataset.make_one_shot_iterator().get_next()
 
         compressor_outputs = self.compressor.forward(batch, training)
@@ -262,7 +264,8 @@ class CompressorWithDownstreamLoss:
                                                     label=batch['label'])
         compressed_metric = self.downstream_task.metric(label=batch['label'], X_reconstruction=clipped_X_tilde)
 
-        total = batch['lambda'] * mse * (255 ** 2) + batch['alpha'] * downstream_loss * (255 ** 2) + bpp
+        total = batch['lambda'] * mse * (255 ** 2) + batch['alpha'] * alpha_multiplier * downstream_loss * (
+                255 ** 2) + bpp
 
         return {'mse': mse,
                 'bpp': bpp,
@@ -324,11 +327,15 @@ class CompressorWithDownstreamLoss:
         main_lr_placeholder = tf.placeholder(dtype=tf.float32)
         assign_lr = tf.assign(self.main_lr, main_lr_placeholder)
 
-        train_outputs_losses_metrics = self._get_outputs_losses_metrics(dataset, training=True)
-        val_outputs_losses_metrics = self._get_outputs_losses_metrics(random_parameter_val_dataset, training=False)
+        alpha_multplier = tf.placeholder(tf.float32)
+        train_outputs_losses_metrics = self._get_outputs_losses_metrics(dataset, training=True,
+                                                                        alpha_multiplier=alpha_multplier)
+        val_outputs_losses_metrics = self._get_outputs_losses_metrics(random_parameter_val_dataset, training=False,
+                                                                      alpha_multiplier=alpha_multplier)
 
-        const_parameter_outputs = {parameters: self._get_outputs_losses_metrics(d, training=False)
-                                   for parameters, d in const_parameter_val_datasets.items()}
+        const_parameter_outputs = {
+            parameters: self._get_outputs_losses_metrics(d, training=False, alpha_multiplier=alpha_multplier)
+            for parameters, d in const_parameter_val_datasets.items()}
 
         non_frozen_variables = [v for v in tf.global_variables() if
                                 v not in self.downstream_task.frozen_variables(epoch=0)]
@@ -343,6 +350,7 @@ class CompressorWithDownstreamLoss:
         val_logger = Logger(Path(log_dir) / 'val')
 
         for epoch in trange(epochs, desc='epoch'):
+            current_alpha_multiplier = 1.0 if not self.alpha_burnin or epoch >= self.downstream_task.burnin_epochs else 0.0
             if epoch == self.downstream_task.burnin_epochs:
                 non_frozen_variables = [v for v in tf.global_variables() if
                                         v not in self.downstream_task.frozen_variables(epoch=epoch)]
@@ -359,26 +367,26 @@ class CompressorWithDownstreamLoss:
             train_logger.log_scalar('main_lr', self.main_schedule(epoch), step=epoch)
 
             for train_step in trange(dataset_steps, desc='train batch'):
-                train_results, _ = sess.run([train_outputs_losses_metrics, train_steps])
+                train_results, _ = sess.run([train_outputs_losses_metrics, train_steps], feed_dict={
+                    alpha_multplier: current_alpha_multiplier})
 
-                if epoch % train_log_period == 0:
-                    self._accumulate(train_results, training=True)
+                self._accumulate(train_results, training=True)
 
-                    if train_step == 0:
-                        comparison = original_reconstruction_comparison(
-                            train_results['X'],
-                            train_results['X_tilde'],
-                            size=10,
-                            alphas=train_results['alpha'],
-                            lambdas=train_results['lambda'])
-                        train_logger.log_image('original_vs_reconstruction', comparison, step=epoch)
+                if train_step == 0:
+                    comparison = original_reconstruction_comparison(
+                        train_results['X'],
+                        train_results['X_tilde'],
+                        size=10,
+                        alphas=train_results['alpha'],
+                        lambdas=train_results['lambda'])
+                    train_logger.log_image('original_vs_reconstruction', comparison, step=epoch)
 
-            if epoch % train_log_period == 0 and epoch:
-                self._log_accumulated(train_logger, epoch=epoch, training=True)
+            self._log_accumulated(train_logger, epoch=epoch, training=True)
 
             if epoch % val_log_period == 0 and epoch:
                 for val_step in trange(val_dataset_steps, desc='val batch with random parameters'):
-                    val_results = sess.run(val_outputs_losses_metrics)
+                    val_results = sess.run(val_outputs_losses_metrics,
+                                           feed_dict={alpha_multplier: current_alpha_multiplier})
                     self._accumulate(val_results, training=False)
 
                     if val_step == 0:
@@ -407,7 +415,7 @@ class CompressorWithDownstreamLoss:
                     downstream_metrics = []
 
                     for _ in trange(val_dataset_steps, desc='val grid batch'):
-                        results = sess.run(outputs)
+                        results = sess.run(outputs, feed_dict={alpha_multplier: current_alpha_multiplier})
                         psnrs.extend(results['psnr'])
                         bpps.extend(results['bpp'])
                         downstream_losses.extend(results['downstream_loss'])
@@ -434,6 +442,13 @@ class CompressorWithDownstreamLoss:
             train_logger.writer.flush()
             val_logger.writer.flush()
 
+            if self.min_max_bpp and epoch >= 5:
+                mean_train_bpp = np.mean(self.train_metrics['bpp'])
+                if mean_train_bpp < self.min_max_bpp[0] or mean_train_bpp > self.min_max_bpp[1]:
+                    with (Path(log_dir) / 'bpp_out_of_range.txt').open('w') as fp:
+                        fp.write(f'epoch: {epoch}, train bpp: {mean_train_bpp:0.2f}')
+                        return
+
 
 def pipeline_add_sampled_parameters(dataset, alpha_range, lambda_range, sample_fn):
     return dataset.map(lambda X, label: {
@@ -453,3 +468,14 @@ def pipeline_add_constant_parameters(item, alpha, lmbda):
     })
 
     return item
+
+def pipeline_add_range_of_parameters(item, alpha_linspace, lambda_linspace):
+    augmented_items = {k: [] for k in list(item.keys()) + ['alpha', 'lambda']}
+
+    for alpha in alpha_linspace:
+        for lmbda in lambda_linspace:
+            augmented = pipeline_add_constant_parameters(item, alpha, lmbda)
+            for k, value_list in augmented_items.items():
+                value_list.append(augmented[k])
+
+    return augmented_items

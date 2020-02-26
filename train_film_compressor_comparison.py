@@ -55,6 +55,9 @@ parser.add_argument('--drop_lr_multiplier', type=float, default=0.5)
 parser.add_argument('--epochs', type=int, required=True)
 parser.add_argument('--correct_bgr', action='store_true')
 
+parser.add_argument('--alpha_burnin', action='store_true')
+parser.add_argument('--min_max_bpp', nargs=2, type=float)
+
 parser.add_argument('--train_summary_period', type=int, default=1)
 parser.add_argument('--val_summary_period', type=int, default=5)
 parser.add_argument('--checkpoint_period', type=int, default=50)
@@ -155,7 +158,9 @@ if args.downstream_loss_type == 'activation_difference':
                                                                             **common_downstream_arguments)
 
 compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
-                                                                     downstream_task)
+                                                                     downstream_task,
+                                                                     alpha_burnin=args.alpha_burnin,
+                                                                     min_max_bpp=args.min_max_bpp)
 
 if not args.drop_lr_epochs:
     main_schedule = lambda _: args.main_lr
