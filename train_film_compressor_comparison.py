@@ -114,13 +114,18 @@ with tf.device("/cpu:0"):
     random_parameters_val_dataset = pipeline_add_sampled_parameters(val_dataset, args.alpha_range, args.lambda_range,
                                                                     sample_fn=sample_functions[args.sample_function])
 
+    if args.sample_function == 'uniform':
+        linspace_fn = lambda min, max, points: np.linspace(min, max, points)
+    if args.sample_function == 'loguniform':
+        linspace_fn = lambda min, max, points: np.exp(np.linspace(np.log(min), np.log(max), points))
+
     if args.lambda_range[0] != args.lambda_range[1]:
-        lambda_eval_linspace = np.linspace(args.lambda_range[0], args.lambda_range[1], args.eval_points)
+        lambda_eval_linspace = linspace_fn(args.lambda_range[0], args.lambda_range[1], args.eval_points)
     else:
         lambda_eval_linspace = [args.lambda_range[0]]
 
     if args.alpha_range[0] != args.alpha_range[1]:
-        alpha_eval_linspace = np.linspace(args.alpha_range[0], args.alpha_range[1], args.eval_points)
+        alpha_eval_linspace = linspace_fn(args.alpha_range[0], args.alpha_range[1], args.eval_points)
     else:
         alpha_eval_linspace = [args.alpha_range[0]]
 
