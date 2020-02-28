@@ -40,13 +40,11 @@ class LRandWDScheduler(tfk.callbacks.Callback):
         logs['weight_decay'] = K.get_value(self.model.optimizer._optimizer.weight_decay)
 
 
-data_train = Path(args.dataset) / 'train'
-data_train = list(data_train.glob('**/*.png'))
+data_train = list(Path(args.dataset).glob('**/train/*/*/*.png'))
 train_len = len(data_train)
 data_train = pipeline(data_train, flip=True, crop=True, batch_size=args.batch_size, num_parallel_calls=8)
 
-data_test = Path(args.dataset) / 'test'
-data_test = list(data_test.glob('**/*.png'))
+data_test = list(Path(args.dataset).glob('**/test/*/*/*.png'))
 test_len = len(data_test)
 data_test = pipeline(data_test, flip=False, crop=False, batch_size=args.batch_size, num_parallel_calls=8)
 
