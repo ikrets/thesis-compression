@@ -23,7 +23,7 @@ parser.add_argument('--steps', type=int, required=True)
 args = parser.parse_args()
 
 Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-save_experiment_params(args.output_dir, vars(args))
+save_experiment_params(args.output_dir, args)
 
 with (Path(args.experiment) / 'parameters.json').open('r') as fp:
     parameters = json.load(fp)
