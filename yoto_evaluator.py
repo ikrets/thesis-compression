@@ -14,9 +14,13 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--uncompressed_dataset', type=str, required=True)
-parser.add_argument('--experiment_collection_dir', type=str, required=True)
+parser.add_argument('--experiment_collection_dir', type=str)
+parser.add_argument('--experiment_dir', type=str)
 parser.add_argument('--output_dir', type=str, required=True)
 parser.add_argument('--linspace_steps', type=int, required=True)
+parser.add_argument('--alpha_range', type=float, nargs=2)
+parser.add_argument('--lambda_range', type=float, nargs=2)
+parser.add_argument('--sample_function', choices=['uniform', 'loguniform'], required=True)
 
 args = parser.parse_args()
 
@@ -48,8 +52,11 @@ input_data = input_data.map(lambda item: {'X': decode_and_preprocess_cifar10(ite
 input_data = input_data.batch(args.batch_size)
 input_num_batches = np.ceil(len(files) / args.batch_size).astype(int)
 
-experiments = [e for e in Path(args.experiment_collection_dir).iterdir() if
-               e.is_dir() and (e / 'parameters.json').exists()]
+if args.experiment_collection_dir:
+    experiments = [e for e in Path(args.experiment_collection_dir).iterdir() if
+                   e.is_dir() and (e / 'parameters.json').exists()]
+elif args.experiment_dir:
+    experiments = [Path(args.experiment_dir)]
 
 for experiment in tqdm(experiments, desc='Experiment'):
     with (experiment / 'parameters.json').open('r') as fp:
@@ -59,15 +66,15 @@ for experiment in tqdm(experiments, desc='Experiment'):
     if parameters['downstream_model_weights']:
         downstream_model.load_weights(parameters['downstream_model_weights'])
 
-    if parameters['sample_function'] == 'uniform':
-        alpha_linspace = np.linspace(parameters['alpha_range'][0], parameters['alpha_range'][1], args.linspace_steps)
-        lambda_linspace = np.linspace(parameters['lambda_range'][0], parameters['lambda_range'][1], args.linspace_steps)
-    if parameters['sample_function'] == 'loguniform':
+    if args.sample_function == 'uniform':
+        alpha_linspace = np.linspace(args.alpha_range[0], args.alpha_range[1], args.linspace_steps)
+        lambda_linspace = np.linspace(args.lambda_range[0], args.lambda_range[1], args.linspace_steps)
+    if args.sample_function == 'loguniform':
         alpha_linspace = np.exp(
-            np.linspace(np.log(parameters['alpha_range'][0]), np.log(parameters['alpha_range'][1]),
+            np.linspace(np.log(args.alpha_range[0]), np.log(args.alpha_range[1]),
                         args.linspace_steps))
         lambda_linspace = np.exp(
-            np.linspace(np.log(parameters['lambda_range'][0]), np.log(parameters['lambda_range'][1]),
+            np.linspace(np.log(args.lambda_range[0]), np.log(args.lambda_range[1]),
                         args.linspace_steps))
 
 

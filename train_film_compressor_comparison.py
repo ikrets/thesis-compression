@@ -58,7 +58,6 @@ parser.add_argument('--correct_bgr', action='store_true')
 parser.add_argument('--alpha_burnin', action='store_true')
 parser.add_argument('--min_max_bpp', nargs=2, type=float)
 
-parser.add_argument('--train_summary_period', type=int, default=1)
 parser.add_argument('--val_summary_period', type=int, default=5)
 parser.add_argument('--checkpoint_period', type=int, default=50)
 parser.add_argument('--dataset', type=str, required=True)
@@ -183,6 +182,5 @@ compressor_with_downstream_comparison.fit(tf.keras.backend.get_session(),
                                           const_parameter_val_datasets=const_parameter_val_datasets,
                                           epochs=args.epochs,
                                           log_dir=experiment_dir,
-                                          train_log_period=args.train_summary_period,
                                           val_log_period=args.val_summary_period,
                                           checkpoint_period=args.checkpoint_period)

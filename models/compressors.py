@@ -321,7 +321,6 @@ class CompressorWithDownstreamLoss:
             const_parameter_val_datasets,
             epochs,
             log_dir,
-            train_log_period,
             val_log_period,
             checkpoint_period):
         main_lr_placeholder = tf.placeholder(dtype=tf.float32)
