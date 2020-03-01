@@ -59,6 +59,22 @@ if args.experiment_collection_dir:
 elif args.experiment_dir:
     experiments = [Path(args.experiment_dir)]
 
+if args.sample_function == 'uniform':
+    alpha_linspace = np.linspace(args.alpha_range[0], args.alpha_range[1], args.alpha_linspace_steps)
+    lambda_linspace = np.linspace(args.lambda_range[0], args.lambda_range[1], args.lambda_linspace_steps)
+if args.sample_function == 'loguniform':
+    alpha_linspace = np.exp(
+        np.linspace(np.log(args.alpha_range[0]), np.log(args.alpha_range[1]),
+                    args.alpha_linspace_steps))
+    lambda_linspace = np.exp(
+        np.linspace(np.log(args.lambda_range[0]), np.log(args.lambda_range[1]),
+                    args.lambda_linspace_steps))
+
+
+def add_params(item):
+    return pipeline_add_range_of_parameters(item, alpha_linspace, lambda_linspace)
+
+
 for experiment in tqdm(experiments, desc='Experiment'):
     with (experiment / 'parameters.json').open('r') as fp:
         parameters = json.load(fp)
@@ -66,22 +82,6 @@ for experiment in tqdm(experiments, desc='Experiment'):
     downstream_model = tf.keras.models.load_model(parameters['downstream_model'])
     if parameters['downstream_model_weights']:
         downstream_model.load_weights(parameters['downstream_model_weights'])
-
-    if args.sample_function == 'uniform':
-        alpha_linspace = np.linspace(args.alpha_range[0], args.alpha_range[1], args.alpha_linspace_steps)
-        lambda_linspace = np.linspace(args.lambda_range[0], args.lambda_range[1], args.lambda_linspace_steps)
-    if args.sample_function == 'loguniform':
-        alpha_linspace = np.exp(
-            np.linspace(np.log(args.alpha_range[0]), np.log(args.alpha_range[1]),
-                        args.alpha_linspace_steps))
-        lambda_linspace = np.exp(
-            np.linspace(np.log(args.lambda_range[0]), np.log(args.lambda_range[1]),
-                        args.lambda_linspace_steps))
-
-
-    def add_params(item):
-        return pipeline_add_range_of_parameters(item, alpha_linspace, lambda_linspace)
-
 
     input_data_with_params = input_data.map(add_params, num_parallel_calls=8)
     input_data_with_params = input_data_with_params.unbatch().prefetch(tf.data.experimental.AUTOTUNE)
