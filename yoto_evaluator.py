@@ -17,7 +17,8 @@ parser.add_argument('--uncompressed_dataset', type=str, required=True)
 parser.add_argument('--experiment_collection_dir', type=str)
 parser.add_argument('--experiment_dir', type=str)
 parser.add_argument('--output_dir', type=str, required=True)
-parser.add_argument('--linspace_steps', type=int, required=True)
+parser.add_argument('--alpha_linspace_steps', type=int, required=True)
+parser.add_argument('--lambda_linspace_steps', type=int, required=True)
 parser.add_argument('--alpha_range', type=float, nargs=2)
 parser.add_argument('--lambda_range', type=float, nargs=2)
 parser.add_argument('--sample_function', choices=['uniform', 'loguniform'], required=True)
@@ -67,15 +68,15 @@ for experiment in tqdm(experiments, desc='Experiment'):
         downstream_model.load_weights(parameters['downstream_model_weights'])
 
     if args.sample_function == 'uniform':
-        alpha_linspace = np.linspace(args.alpha_range[0], args.alpha_range[1], args.linspace_steps)
-        lambda_linspace = np.linspace(args.lambda_range[0], args.lambda_range[1], args.linspace_steps)
+        alpha_linspace = np.linspace(args.alpha_range[0], args.alpha_range[1], args.alpha_linspace_steps)
+        lambda_linspace = np.linspace(args.lambda_range[0], args.lambda_range[1], args.lambda_linspace_steps)
     if args.sample_function == 'loguniform':
         alpha_linspace = np.exp(
             np.linspace(np.log(args.alpha_range[0]), np.log(args.alpha_range[1]),
-                        args.linspace_steps))
+                        args.alpha_linspace_steps))
         lambda_linspace = np.exp(
             np.linspace(np.log(args.lambda_range[0]), np.log(args.lambda_range[1]),
-                        args.linspace_steps))
+                        args.lambda_linspace_steps))
 
 
     def add_params(item):
