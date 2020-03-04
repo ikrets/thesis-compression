@@ -11,6 +11,7 @@ import datasets.cifar10
 parser = argparse.ArgumentParser()
 parser.add_argument('--experiment_collection_dir', type=str)
 parser.add_argument('--experiment_dir', type=str)
+parser.add_argument('--compressed_extension', type=str, required=True)
 parser.add_argument('--original_model', type=str, required=True)
 parser.add_argument('--original_model_weights', type=str)
 parser.add_argument('--original_dataset', type=str, required=True)
@@ -42,13 +43,7 @@ elif args.experiment_dir:
     experiments = [Path(args.experiment_dir)]
 
 test_files = lambda path: [str(f) for f in Path(path).glob('**/test/*/*/*.png')]
-compressed_test_files = lambda path: [str(f) for f in Path(path).glob('**/test/*/*/*.tfci')]
-
-original_data_for_compressed_model = datasets.cifar10.pipeline(test_files(args.original_dataset), flip=False,
-                                                               crop=False,
-                                                               batch_size=args.batch_size,
-                                                               repeat=False,
-                                                               num_parallel_calls=8)
+compressed_test_files = lambda path: [str(f) for f in Path(path).glob(f'**/test/*/*/*.{args.compressed_extension}')]
 
 results = {'bpp': [], 'experiment_dir': [], 'c2o_crossentropy': [], 'c2o_accuracy': [], 'c2c_crossentropy': [],
            'c2c_accuracy': [], 'o2c_crossentropy': [], 'o2c_accuracy': []}
@@ -57,8 +52,16 @@ for experiment in tqdm(experiments, desc='Experiment'):
     with (experiment / 'parameters.json').open('r') as fp:
         parameters = json.load(fp)
 
+    original_data_for_compressed_model = datasets.cifar10.pipeline(test_files(args.original_dataset), flip=False,
+                                                                   crop=False,
+                                                                   batch_size=args.batch_size,
+                                                                   correct_bgr=(experiment / 'bgr').exists(),
+                                                                   repeat=False,
+                                                                   num_parallel_calls=8)
+
     compressed_data = datasets.cifar10.pipeline(test_files(parameters['dataset']), flip=False, crop=False,
                                                 batch_size=args.batch_size,
+                                                correct_bgr=(experiment / 'bgr').exists(),
                                                 repeat=False,
                                                 num_parallel_calls=8)
 
