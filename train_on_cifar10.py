@@ -42,7 +42,8 @@ class LRandWDScheduler(tfk.callbacks.Callback):
 
 data_train = list(Path(args.dataset).glob('**/train/*/*/*.png'))
 train_len = len(data_train)
-data_train = pipeline(data_train, flip=True, crop=True, batch_size=args.batch_size, num_parallel_calls=8)
+data_train = pipeline(data_train, flip=True, crop=True, batch_size=args.batch_size, shuffle_buffer_size=10000,
+                      num_parallel_calls=8)
 
 data_test = list(Path(args.dataset).glob('**/test/*/*/*.png'))
 test_len = len(data_test)

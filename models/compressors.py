@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from tqdm import trange, tqdm
 
+from models.downstream_losses import PerceptualLoss
 from visualization.tensorboard_logging import Logger
 from visualization.tensorboard import original_reconstruction_comparison
 from visualization.plots import rate_distortion_curve, figure_to_numpy
@@ -233,12 +234,12 @@ def bits_per_pixel(Y_likelihoods, X_shape):
 
 class CompressorWithDownstreamLoss:
     def __init__(self,
-                 compressor,
-                 downstream_loss,
-                 min_max_bpp=None):
+                 compressor: SimpleFiLMCompressor,
+                 downstream_loss: PerceptualLoss,
+                 bpp_range_adapter: 'BppRangeAdapter') -> None:
         self.compressor = compressor
         self.downstream_loss = downstream_loss
-        self.min_max_bpp = min_max_bpp
+        self.bpp_range_adapter = bpp_range_adapter
 
     def set_optimizers(self, main_optimizer, aux_optimizer, main_lr, main_schedule):
         self.main_lr = main_lr
@@ -248,8 +249,9 @@ class CompressorWithDownstreamLoss:
         self.main_optimizer = main_optimizer
         self.aux_optimizer = aux_optimizer
 
-    def _get_outputs_losses_metrics(self, dataset, training):
+    def _get_outputs_losses_metrics(self, dataset, add_parameters_fn, training):
         batch = dataset.make_one_shot_iterator().get_next()
+        batch = add_parameters_fn(batch)
 
         compressor_outputs = self.compressor.forward(batch, training)
         clipped_X_tilde = tf.clip_by_value(compressor_outputs['X_tilde'], 0, 1)
@@ -314,29 +316,41 @@ class CompressorWithDownstreamLoss:
     # TODO feed separate random parameter dataset and zip it with the train and validation sets!
     def fit(self, sess,
             dataset, dataset_steps,
-            random_parameter_val_dataset, val_dataset_steps,
-            const_parameter_val_datasets,
+            val_dataset, val_dataset_steps,
+            val_bpp_linspace_steps,
             epochs,
             log_dir,
             val_log_period,
-            checkpoint_period):
+            checkpoint_period,
+            reevaluate_bpp_range_period):
         main_lr_placeholder = tf.placeholder(dtype=tf.float32)
         assign_lr = tf.assign(self.main_lr, main_lr_placeholder)
 
-        alpha_multplier = tf.placeholder(tf.float32)
-        train_outputs_losses_metrics = self._get_outputs_losses_metrics(dataset, training=True)
-        val_outputs_losses_metrics = self._get_outputs_losses_metrics(random_parameter_val_dataset, training=False)
+        train_outputs_losses_metrics = self._get_outputs_losses_metrics(
+            dataset,
+            add_parameters_fn=self.bpp_range_adapter.add_computed_parameters,
+            training=True)
+        val_outputs_losses_metrics = self._get_outputs_losses_metrics(
+            val_dataset,
+            add_parameters_fn=self.bpp_range_adapter.add_computed_parameters,
+            training=False)
 
-        const_parameter_outputs = {
-            parameters: self._get_outputs_losses_metrics(d, training=False)
-            for parameters, d in const_parameter_val_datasets.items()}
+        alpha_placeholder = tf.placeholder(tf.float32)
+        val_constant_alpha_losses_metrics = self._get_outputs_losses_metrics(
+            val_dataset,
+            add_parameters_fn=lambda item: pipeline_add_constant_parameters(item, alpha_placeholder,
+                                                                            self.bpp_range_adapter.lmbda),
+            training=False)
 
-        non_frozen_variables = [v for v in tf.global_variables() if v not in self.downstream_loss.model.variables]
+        initialize_variables = [v for v in tf.global_variables() if
+                                v not in self.downstream_loss.model.variables]
+        optimize_variables = [v for v in tf.global_variables() if
+                              v not in self.downstream_loss.model.variables and v.trainable]
         main_step = self.main_optimizer.minimize(tf.reduce_mean(train_outputs_losses_metrics['total']),
-                                                 var_list=non_frozen_variables)
+                                                 var_list=optimize_variables)
         aux_step = self.aux_optimizer.minimize(self.compressor.entropy_bottleneck.losses[0])
         train_steps = tf.group([main_step, aux_step, self.compressor.entropy_bottleneck.updates[0]])
-        sess.run(tf.variables_initializer(non_frozen_variables + self._get_optimizer_variables()))
+        sess.run(tf.variables_initializer(initialize_variables + self._get_optimizer_variables()))
 
         train_logger = Logger(Path(log_dir) / 'train')
         val_logger = Logger(Path(log_dir) / 'val')
@@ -362,6 +376,12 @@ class CompressorWithDownstreamLoss:
 
             self._log_accumulated(train_logger, epoch=epoch, training=True)
 
+            if epoch % reevaluate_bpp_range_period == 0 and epoch:
+                try:
+                    self.bpp_range_adapter.update()
+                except RuntimeError:
+                    tqdm.write('Could not fit a bpp-alpha curve!')
+
             if epoch % val_log_period == 0 and epoch:
                 for val_step in trange(val_dataset_steps, desc='val batch with random parameters'):
                     val_results = sess.run(val_outputs_losses_metrics)
@@ -386,21 +406,25 @@ class CompressorWithDownstreamLoss:
                     'downstream_loss': [],
                     'downstream_metric': []
                 }
-                for (alpha, lmbda), outputs in tqdm(const_parameter_outputs.items(), desc='val grid params dataset'):
+                eval_bpp_linspace = np.linspace(self.bpp_range_adapter.bpp_range[0],
+                                                self.bpp_range_adapter.bpp_range[1],
+                                                val_bpp_linspace_steps)
+                eval_alpha_linspace = self.bpp_range_adapter.bpp_to_alpha.numpy_call(eval_bpp_linspace)
+                for alpha in tqdm(eval_alpha_linspace, desc='Evaluating different alphas'):
                     psnrs = []
                     bpps = []
                     downstream_losses = []
                     downstream_metrics = []
 
                     for _ in trange(val_dataset_steps, desc='val grid batch'):
-                        results = sess.run(outputs)
+                        results = sess.run(val_constant_alpha_losses_metrics, {alpha_placeholder: alpha})
                         psnrs.extend(results['psnr'])
                         bpps.extend(results['bpp'])
                         downstream_losses.extend(results['downstream_loss'])
                         downstream_metrics.extend(results['downstream_metric'])
 
                     evaluations['alpha'].append(alpha)
-                    evaluations['lambda'].append(lmbda)
+                    evaluations['lambda'].append(self.bpp_range_adapter.lmbda)
                     evaluations['bpp'].append(np.mean(bpps))
                     evaluations['psnr'].append(np.mean(psnrs))
                     evaluations['downstream_loss'].append(np.mean(downstream_losses))
@@ -420,13 +444,6 @@ class CompressorWithDownstreamLoss:
             train_logger.writer.flush()
             val_logger.writer.flush()
 
-            if self.min_max_bpp and epoch >= 5:
-                mean_train_bpp = np.mean(self.train_metrics['bpp'])
-                if mean_train_bpp < self.min_max_bpp[0] or mean_train_bpp > self.min_max_bpp[1]:
-                    with (Path(log_dir) / 'bpp_out_of_range.txt').open('w') as fp:
-                        fp.write(f'epoch: {epoch}, train bpp: {mean_train_bpp:0.2f}')
-                        return
-
 
 def pipeline_add_sampled_parameters(dataset, alpha_range, lambda_range, sample_fn):
     return dataset.map(lambda X, label: {
@@ -438,7 +455,7 @@ def pipeline_add_sampled_parameters(dataset, alpha_range, lambda_range, sample_f
 
 
 def pipeline_add_constant_parameters(item, alpha, lmbda):
-    repeat = lambda value, X: tf.tile(tf.constant([value], dtype=tf.float32), multiples=(tf.shape(X)[0],))
+    repeat = lambda value, X: tf.repeat(value, repeats=tf.shape(X)[0])
 
     item.update({
         'alpha': repeat(alpha, item['X']),

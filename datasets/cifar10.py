@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from pathlib import Path
+from typing import Optional
 
 MEAN = (0.4914, 0.4822, 0.4465)
 SCALE = (0.2023, 0.1994, 0.2010)
@@ -21,10 +22,11 @@ def filename_to_label(filenames):
     return y
 
 
-def pipeline(filenames, batch_size, flip, crop, classifier_normalize=True, shuffle=True, correct_bgr=False,
+def pipeline(filenames, batch_size, flip, crop, classifier_normalize=True, shuffle_buffer_size: Optional[int] = None,
+             correct_bgr=False,
              repeat=True,
              num_parallel_calls=8):
-    if shuffle:
+    if shuffle_buffer_size:
         perm = np.random.permutation(len(filenames))
         filenames = np.array(filenames)[perm]
 
@@ -45,11 +47,12 @@ def pipeline(filenames, batch_size, flip, crop, classifier_normalize=True, shuff
 
     data_y = tf.data.Dataset.from_tensor_slices(y)
     data = tf.data.Dataset.zip((data_X, data_y))
-    if shuffle:
-        data = data.shuffle(100)
+    if shuffle_buffer_size:
+        data = data.shuffle(shuffle_buffer_size)
     data = data.batch(batch_size)
 
     if repeat:
         data = data.repeat()
 
-    return data.prefetch(tf.data.experimental.AUTOTUNE)
+    return data
+

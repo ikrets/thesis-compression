@@ -1,32 +1,17 @@
 import argparse
 import math
 from pathlib import Path
-from models.compressors import SimpleFiLMCompressor, CompressorWithDownstreamLoss, \
-    pipeline_add_sampled_parameters, pipeline_add_constant_parameters
+
+from models.bpp_range_adapter import BppRangeAdapter
+from models.compressors import SimpleFiLMCompressor, CompressorWithDownstreamLoss
 import models.downstream_losses
 import tensorflow.compat.v1 as tf
-import numpy as np
 import coolname
 
 from models.utils import make_stepwise
 
 from experiment import save_experiment_params
 import datasets.cifar10
-
-
-def loguniform(len, range):
-    return tf.math.exp(tf.random.uniform([len], minval=tf.math.log(range[0]),
-                                         maxval=tf.math.log(range[1])))
-
-
-def uniform(len, range):
-    return tf.random.uniform([len], minval=range[0], maxval=range[1])
-
-
-sample_functions = {
-    'loguniform': loguniform,
-    'uniform': uniform
-}
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--num_filters', type=int, default=192)
@@ -37,10 +22,9 @@ parser.add_argument('--film_width', type=int)
 parser.add_argument('--film_activation', type=str)
 parser.add_argument('--batchsize', type=int, default=128)
 parser.add_argument('--eval_batchsize', type=int, default=256)
-parser.add_argument('--lambda_range', type=float, nargs=2, required=True)
-parser.add_argument('--alpha_range', type=float, nargs=2, required=True)
-parser.add_argument('--sample_function', choices=sample_functions.keys(), required=True)
-parser.add_argument('--eval_points', type=int, default=10)
+parser.add_argument('--lambda', type=float, required=True, dest='lmbda')
+parser.add_argument('--initial_alpha_range', type=float, nargs=2, required=True)
+parser.add_argument('--val_bpp_linspace_steps', type=int, default=10)
 
 parser.add_argument('--optimizer', choices=['momentum', 'adam'], required=True)
 parser.add_argument('--main_lr', type=float, required=True)
@@ -51,7 +35,8 @@ parser.add_argument('--drop_lr_multiplier', type=float, default=0.5)
 parser.add_argument('--epochs', type=int, required=True)
 parser.add_argument('--correct_bgr', action='store_true')
 
-parser.add_argument('--min_max_bpp', nargs=2, type=float)
+parser.add_argument('--target_bpp_range', nargs=2, type=float, required=True)
+parser.add_argument('--reevaluate_bpp_range_period', type=int, required=True)
 
 parser.add_argument('--val_summary_period', type=int, default=5)
 parser.add_argument('--checkpoint_period', type=int, default=50)
@@ -71,9 +56,16 @@ experiment_dir.mkdir(parents=True)
 save_experiment_params(experiment_dir, args)
 
 opt = tf.train.AdamOptimizer if args.optimizer == 'adam' else tf.train.MomentumOptimizer
-main_lr = tf.Variable(0.0, tf.float32)
+main_lr = tf.Variable(0.0, dtype=tf.float32, trainable=False)
 main_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(opt(main_lr))
 aux_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(opt(args.aux_lr))
+
+compressor = SimpleFiLMCompressor(num_filters=args.num_filters,
+                                  depth=args.depth,
+                                  num_postproc=args.num_postproc,
+                                  FiLM_depth=args.film_depth,
+                                  FiLM_width=args.film_width,
+                                  FiLM_activation=args.film_activation)
 
 with tf.device("/cpu:0"):
     dataset = Path(args.dataset)
@@ -82,58 +74,28 @@ with tf.device("/cpu:0"):
                                               flip=True,
                                               crop=False,
                                               batch_size=args.batchsize,
-                                              shuffle=True,
+                                              shuffle_buffer_size=10000,
                                               classifier_normalize=False,
                                               num_parallel_calls=8)
-    train_dataset = pipeline_add_sampled_parameters(train_dataset, args.alpha_range, args.lambda_range,
-                                                    sample_fn=sample_functions[args.sample_function])
+    train_dataset = train_dataset.map(lambda X, label: {'X': X, 'label': label},
+                                      num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    train_dataset = train_dataset.prefetch(1)
     train_steps = math.ceil(len(train_filenames) / args.batchsize)
     val_filenames = list((dataset / 'test').glob('**/*.png'))
     val_dataset = datasets.cifar10.pipeline(filenames=val_filenames,
                                             flip=False,
                                             crop=False,
                                             batch_size=args.eval_batchsize,
-                                            shuffle=False,
                                             classifier_normalize=False,
                                             num_parallel_calls=8)
+    val_dataset = val_dataset.map(lambda X, label: {'X': X, 'label': label},
+                                      num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    val_dataset = val_dataset.prefetch(1)
     val_steps = math.ceil(len(val_filenames) / args.eval_batchsize)
-    random_parameters_val_dataset = pipeline_add_sampled_parameters(val_dataset, args.alpha_range, args.lambda_range,
-                                                                    sample_fn=sample_functions[args.sample_function])
 
-    if args.sample_function == 'uniform':
-        linspace_fn = lambda min, max, points: np.linspace(min, max, points)
-    if args.sample_function == 'loguniform':
-        linspace_fn = lambda min, max, points: np.exp(np.linspace(np.log(min), np.log(max), points))
-
-    if args.lambda_range[0] != args.lambda_range[1]:
-        lambda_eval_linspace = linspace_fn(args.lambda_range[0], args.lambda_range[1], args.eval_points)
-    else:
-        lambda_eval_linspace = [args.lambda_range[0]]
-
-    if args.alpha_range[0] != args.alpha_range[1]:
-        alpha_eval_linspace = linspace_fn(args.alpha_range[0], args.alpha_range[1], args.eval_points)
-    else:
-        alpha_eval_linspace = [args.alpha_range[0]]
-
-    const_parameter_val_datasets = {}
-    for alpha in alpha_eval_linspace:
-        for lmbda in lambda_eval_linspace:
-            def add_params(X, label):
-                return pipeline_add_constant_parameters({'X': X, 'label': label}, alpha, lmbda)
-
-
-            const_parameter_val_datasets[(alpha, lmbda)] = val_dataset.map(add_params, num_parallel_calls=8)
-
-compressor = SimpleFiLMCompressor(num_filters=args.num_filters,
-                                  depth=args.depth,
-                                  num_postproc=args.num_postproc,
-                                  FiLM_depth=args.film_depth,
-                                  FiLM_width=args.film_width,
-                                  FiLM_activation=args.film_activation)
 downstream_model = tf.keras.models.load_model(args.downstream_model)
 if args.downstream_model_weights:
     downstream_model.load_weights(args.downstream_model_weights)
-
 preprocess_fn = lambda X: datasets.cifar10.normalize(X if not args.correct_bgr else X[..., ::-1])
 
 downstream_loss = models.downstream_losses.PerceptualLoss(
@@ -144,9 +106,17 @@ downstream_loss = models.downstream_losses.PerceptualLoss(
     normalize_activations=args.perceptual_loss_normalize_activations,
 )
 
+bpp_range_adapter = BppRangeAdapter(compressor=compressor,
+                                    eval_dataset=val_dataset,
+                                    eval_dataset_steps=val_steps,
+                                    bpp_range=args.target_bpp_range,
+                                    lmbda=args.lmbda,
+                                    initial_alpha_range=args.initial_alpha_range,
+                                    alpha_linspace_steps=10)
+
 compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
                                                                      downstream_loss,
-                                                                     min_max_bpp=args.min_max_bpp)
+                                                                     bpp_range_adapter=bpp_range_adapter)
 
 if not args.drop_lr_epochs:
     main_schedule = lambda _: args.main_lr
@@ -160,9 +130,10 @@ compressor_with_downstream_comparison.set_optimizers(main_optimizer=main_optimiz
 
 compressor_with_downstream_comparison.fit(tf.keras.backend.get_session(),
                                           train_dataset, train_steps,
-                                          random_parameters_val_dataset, val_steps,
-                                          const_parameter_val_datasets=const_parameter_val_datasets,
+                                          val_dataset, val_steps,
+                                          val_bpp_linspace_steps=args.val_bpp_linspace_steps,
                                           epochs=args.epochs,
                                           log_dir=experiment_dir,
                                           val_log_period=args.val_summary_period,
-                                          checkpoint_period=args.checkpoint_period)
+                                          checkpoint_period=args.checkpoint_period,
+                                          reevaluate_bpp_range_period=args.reevaluate_bpp_range_period)
