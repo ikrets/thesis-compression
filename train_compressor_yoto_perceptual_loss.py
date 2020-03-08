@@ -3,7 +3,7 @@ import math
 from pathlib import Path
 from models.compressors import SimpleFiLMCompressor, CompressorWithDownstreamLoss, \
     pipeline_add_sampled_parameters, pipeline_add_constant_parameters
-import models.downstream_task
+import models.downstream_losses
 import tensorflow.compat.v1 as tf
 import numpy as np
 import coolname
@@ -26,10 +26,6 @@ def uniform(len, range):
 sample_functions = {
     'loguniform': loguniform,
     'uniform': uniform
-}
-
-model_performance_losses = {
-    'categorical_crossentropy': tf.keras.losses.categorical_crossentropy
 }
 
 parser = argparse.ArgumentParser()
@@ -55,7 +51,6 @@ parser.add_argument('--drop_lr_multiplier', type=float, default=0.5)
 parser.add_argument('--epochs', type=int, required=True)
 parser.add_argument('--correct_bgr', action='store_true')
 
-parser.add_argument('--alpha_burnin', action='store_true')
 parser.add_argument('--min_max_bpp', nargs=2, type=float)
 
 parser.add_argument('--val_summary_period', type=int, default=5)
@@ -64,18 +59,10 @@ parser.add_argument('--dataset', type=str, required=True)
 
 parser.add_argument('--downstream_model', type=str, required=True)
 parser.add_argument('--downstream_model_weights', type=str)
-parser.add_argument('--last_frozen_layer', type=str, required=True)
-parser.add_argument('--burnin_epochs', type=int, default=0)
+parser.add_argument('--experiment_dir', type=str)
 
-subparsers = parser.add_subparsers(dest='downstream_loss_type')
-activation_difference_cmd = subparsers.add_parser('activation_difference')
-activation_difference_cmd.add_argument('--downstream_layer', type=str)
-
-task_performance_cmd = subparsers.add_parser('task_performance')
-task_performance_cmd.add_argument('--model_performance_loss', choices=model_performance_losses.keys(),
-                                  required=True)
-
-parser.add_argument('experiment_dir', type=str)
+parser.add_argument('--perceptual_loss_readouts', type=str, nargs='+')
+parser.add_argument('--perceptual_loss_normalize_activations', action='store_true')
 
 args = parser.parse_args()
 
@@ -147,23 +134,18 @@ downstream_model = tf.keras.models.load_model(args.downstream_model)
 if args.downstream_model_weights:
     downstream_model.load_weights(args.downstream_model_weights)
 
-common_downstream_arguments = {
-    'model': downstream_model,
-    'metric_fn': tf.keras.metrics.categorical_accuracy,
-    'preprocess_fn': lambda X: datasets.cifar10.normalize(X[..., ::-1] if args.correct_bgr else X),
-    'last_frozen_layer': args.last_frozen_layer,
-    'burnin_epochs': args.burnin_epochs
-}
-if args.downstream_loss_type == 'task_performance':
-    downstream_task = models.downstream_task.DownstreamTaskPerformance(
-        model_performance_loss=tf.keras.losses.categorical_crossentropy, **common_downstream_arguments)
-if args.downstream_loss_type == 'activation_difference':
-    downstream_task = models.downstream_task.DownstreamActivationDifference(activation_layer=args.downstream_layer,
-                                                                            **common_downstream_arguments)
+preprocess_fn = lambda X: datasets.cifar10.normalize(X if not args.correct_bgr else X[..., ::-1])
+
+downstream_loss = models.downstream_losses.PerceptualLoss(
+    model=downstream_model,
+    preprocess_fn=preprocess_fn,
+    metric_fn=tf.keras.metrics.categorical_accuracy,
+    readout_layers=args.perceptual_loss_readouts,
+    normalize_activations=args.perceptual_loss_normalize_activations,
+)
 
 compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
-                                                                     downstream_task,
-                                                                     alpha_burnin=args.alpha_burnin,
+                                                                     downstream_loss,
                                                                      min_max_bpp=args.min_max_bpp)
 
 if not args.drop_lr_epochs:
