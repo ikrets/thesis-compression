@@ -122,7 +122,7 @@ def objective(trial: optuna.Trial):
         preprocess_fn=preprocess_fn,
         metric_fn=tf.keras.metrics.categorical_accuracy,
         readout_layers=perceptual_loss_readouts,
-        normalize_activations=trial.suggest_categorical('perceptual_loss_normalize_activations', [True, False])
+        normalize_activations=True
     )
 
     bpp_range_adapter = BppRangeAdapter(compressor=compressor,
