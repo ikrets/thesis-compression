@@ -187,6 +187,9 @@ class BppRangeEvaluation:
 def area_under_bpp_metric(bpps: np.array, metrics: np.array, bpp_range: Tuple[float, float],
                           bpp_linspace_steps: int = 10) -> float:
     try:
+        if len(bpps) < 4:
+            raise RuntimeError
+
         popt, _ = curve_fit(log_curve, bpps, metrics)
         a, b, c, d = popt
 
