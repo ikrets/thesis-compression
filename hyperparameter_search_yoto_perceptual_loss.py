@@ -63,9 +63,12 @@ def objective(trial: optuna.Trial):
     trial_dir = Path(args.experiment_dir) / args.study_name / coolname.generate_slug()
     trial_dir.mkdir(parents=True)
 
+    main_lr = trial.suggest_loguniform('main_lr', *args.main_lr_range)
+    main_lr_var = tf.Variable(main_lr, dtype=tf.float32, trainable=False)
+    main_schedule = lambda _: main_lr
+
     opt = tf.train.AdamOptimizer if args.optimizer == 'adam' else tf.train.MomentumOptimizer
-    main_lr = tf.Variable(0.0, dtype=tf.float32, trainable=False)
-    main_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(opt(main_lr))
+    main_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(opt(main_lr_var))
     aux_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(opt(args.aux_lr))
 
     compressor = SimpleFiLMCompressor(
@@ -128,15 +131,12 @@ def objective(trial: optuna.Trial):
                                         bpp_range=args.target_bpp_range,
                                         lmbda=trial.suggest_loguniform('lambda', *args.lambda_range),
                                         initial_alpha_range=args.initial_alpha_range,
-                                        alpha_linspace_steps=10)
+                                        alpha_linspace_steps=args.val_bpp_linspace_steps)
 
     compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
                                                                          downstream_loss,
                                                                          bpp_range_adapter=bpp_range_adapter)
 
-    main_lr = trial.suggest_loguniform('main_lr', *args.main_lr_range)
-    main_lr_var = tf.Variable(main_lr, dtype=tf.float32, trainable=False)
-    main_schedule = lambda _: main_lr
 
     compressor_with_downstream_comparison.set_optimizers(main_optimizer=main_optimizer,
                                                          aux_optimizer=aux_optimizer,
