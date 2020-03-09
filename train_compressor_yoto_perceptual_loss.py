@@ -2,8 +2,9 @@ import argparse
 import math
 from pathlib import Path
 
-from models.bpp_range_adapter import BppRangeAdapter
-from models.compressors import SimpleFiLMCompressor, CompressorWithDownstreamLoss
+from models.bpp_range import BppRangeAdapter
+from models.compressors import SimpleFiLMCompressor
+from training_schemes import CompressorWithDownstreamLoss
 import models.downstream_losses
 import tensorflow.compat.v1 as tf
 import coolname
@@ -44,7 +45,7 @@ parser.add_argument('--dataset', type=str, required=True)
 
 parser.add_argument('--downstream_model', type=str, required=True)
 parser.add_argument('--downstream_model_weights', type=str)
-parser.add_argument('--experiment_dir', type=str)
+parser.add_argument('--experiment_dir', type=str, required=True)
 
 parser.add_argument('--perceptual_loss_readouts', type=str, nargs='+')
 parser.add_argument('--perceptual_loss_normalize_activations', action='store_true')
@@ -128,10 +129,8 @@ compressor_with_downstream_comparison.set_optimizers(main_optimizer=main_optimiz
                                                      main_lr=main_lr,
                                                      main_schedule=main_schedule)
 
-compressor_with_downstream_comparison.fit(tf.keras.backend.get_session(),
-                                          train_dataset, train_steps,
+compressor_with_downstream_comparison.fit(train_dataset, train_steps,
                                           val_dataset, val_steps,
-                                          val_bpp_linspace_steps=args.val_bpp_linspace_steps,
                                           epochs=args.epochs,
                                           log_dir=experiment_dir,
                                           val_log_period=args.val_summary_period,

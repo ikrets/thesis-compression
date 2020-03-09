@@ -3,6 +3,9 @@ import seaborn as sns
 from io import BytesIO
 import cv2
 import numpy as np
+from typing import List
+
+from models.bpp_range import BppRangeEvaluation
 
 
 def figure_to_numpy(fig):
@@ -53,11 +56,25 @@ def rate_distortion_curve(compression_eval_df,
                 hue = 'lambda'
 
             p = sns.lineplot(x=parameter, y=metric, hue=hue,
-                         marker='o', legend='full',
-                         data=compression_eval_df,
-                         ax=axes[row, col])
+                             marker='o', legend='full',
+                             data=compression_eval_df,
+                             ax=axes[row, col])
             for t in p.legend().texts:
                 t.set_text(t.get_text()[:6])
 
     plt.tight_layout()
     return fig
+
+
+def alpha_comparison(alpha_comparisons: List[BppRangeEvaluation.ImageAlphaComparison]) -> np.array:
+    height, width = alpha_comparisons[0].original_image.shape[1:3]
+    rows = len(alpha_comparisons)
+    columns = len(alpha_comparisons[0].alphas)
+
+    img = np.empty((rows * height, columns * width, 3), dtype=np.float32)
+    for i, comparison in enumerate(alpha_comparisons):
+        img[i * height: (i+1) * height, :width] = comparison.original_image
+        for j in range(len(comparison.alphas)):
+            img[i * height: (i+1) * height, (j + 1) * width: (j+2 ) * width] = comparison.images[j]
+
+    return img
