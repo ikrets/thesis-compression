@@ -183,12 +183,21 @@ class BppRangeEvaluation:
         df = pd.DataFrame(data).groupby('alpha').mean().reset_index()
         return df, alpha_comparisons
 
-def area_under_bpp_metric(evaluation_df: pd.DataFrame, bpp_range: Tuple[float, float]) -> float:
+
+def area_under_bpp_metric(bpps: np.array, metrics: np.array, bpp_range: Tuple[float, float],
+                          bpp_linspace_steps: int = 10) -> float:
     try:
-        popt, _ = curve_fit(log_curve, evaluation_df['bpp'], evaluation_df['downstream_metric'])
+        popt, _ = curve_fit(log_curve, bpps, metrics)
         a, b, c, d = popt
 
-        F = lambda x: (b * x + c) * (a * np.log(b * x + c) - a + d)
-        return F(bpp_range[1]) - F(bpp_range[0])
+        bpp_linspace = np.linspace(*bpp_range, bpp_linspace_steps)
+        predicted_metrics = np.maximum(0., log_curve(bpp_linspace, a, b, c, d))
+
+        return auc(bpp_linspace, predicted_metrics)
     except RuntimeError:
-        return 0.
+        sorted_bpps = np.argsort(bpps)
+        bpps = bpps[sorted_bpps]
+        metrics = metrics[sorted_bpps]
+
+        bpps_within_range = np.logical_and(bpps >= bpp_range[0], bpps <= bpp_range[1])
+        return auc(bpps[bpps_within_range], metrics[bpps_within_range])

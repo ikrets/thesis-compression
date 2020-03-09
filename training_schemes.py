@@ -183,7 +183,9 @@ class CompressorWithDownstreamLoss:
             if epoch % val_log_period == 0 and epoch:
                 evaluation_df, alpha_comparisons = bpp_range_evaluator.evaluate(num_alpha_comparisons_pro_batch=0)
                 val_logger.log_scalar('auc_bpp_metric',
-                                      area_under_bpp_metric(evaluation_df, self.bpp_range_adapter.bpp_range),
+                                      area_under_bpp_metric(evaluation_df['bpp'].array,
+                                                            evaluation_df['downstream_metric'].array,
+                                                            self.bpp_range_adapter.bpp_range),
                                       step=epoch)
 
                 if alpha_comparisons:
@@ -202,4 +204,6 @@ class CompressorWithDownstreamLoss:
             val_logger.writer.flush()
 
         evaluation_df, _ = bpp_range_evaluator.evaluate(num_alpha_comparisons_pro_batch=0)
-        return area_under_bpp_metric(evaluation_df, self.bpp_range_adapter.bpp_range)
+        return area_under_bpp_metric(evaluation_df['bpp'].array,
+                                     evaluation_df['downstream_metric'].array,
+                                     self.bpp_range_adapter.bpp_range)
