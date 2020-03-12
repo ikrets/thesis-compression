@@ -2,9 +2,10 @@ import tensorflow as tf
 import numpy as np
 import argparse
 from pathlib import Path
-import json
 from tqdm import tqdm
 import pandas as pd
+import json
+from typing import List, Dict, Union
 
 import datasets.cifar10
 
@@ -45,8 +46,9 @@ elif args.experiment_dir:
 test_files = lambda path: [str(f) for f in Path(path).glob('**/test/*/*/*.png')]
 compressed_test_files = lambda path: [str(f) for f in Path(path).glob(f'**/test/*/*/*.{args.compressed_extension}')]
 
-results = {'bpp': [], 'experiment_dir': [], 'c2o_crossentropy': [], 'c2o_accuracy': [], 'c2c_crossentropy': [],
-           'c2c_accuracy': [], 'o2c_crossentropy': [], 'o2c_accuracy': []}
+results: Dict[str, List[Union[float, str]]] = {'bpp': [], 'experiment_dir': [], 'c2o_crossentropy': [], 'c2o_accuracy': [],
+                                   'c2c_crossentropy': [],
+                                   'c2c_accuracy': [], 'o2c_crossentropy': [], 'o2c_accuracy': []}
 
 for experiment in tqdm(experiments, desc='Experiment'):
     with (experiment / 'parameters.json').open('r') as fp:

@@ -68,5 +68,5 @@ while True:
            f'{downstream_loss_type} {loss_type_specific} ' \
            'experiments/compressor/cifar10-yoto-cat-crossent-burnin'
 
-    args = shlex.split(args)
-    subprocess.run(args)
+    split_args = shlex.split(args)
+    subprocess.run(split_args)

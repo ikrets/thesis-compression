@@ -9,45 +9,116 @@ from typing import Tuple, Sequence, Dict, List
 
 from models.downstream_losses import PerceptualLoss
 
-
-def log_curve(x, a, b, c, d):
-    return a * np.log(b * x + c) + d
+_log_eps = 1e-5
 
 
-class BppToAlphaFn:
-    def __init__(self,
-                 initial_alpha_range: Tuple[float, float],
-                 bpp_range: Tuple[float, float]) -> None:
-        initial_a = (bpp_range[0] - bpp_range[1]) / (np.log(initial_alpha_range[0]) - np.log(initial_alpha_range[1]))
-        initial_b = 1
-        initial_c = 0
-        initial_d = bpp_range[0] - initial_a * np.log(initial_alpha_range[0])
+def _non_negative_log_curve(x: np.ndarray, a: float, b: float, c: float, d: float) -> np.ndarray:
+    return a * np.log(np.maximum(b * x + c, _log_eps)) + d
 
-        self.opts = tf.Variable([initial_a, initial_b, initial_c, initial_d],
-                                name='bpp_to_alpha_opts',
-                                trainable=False,
-                                dtype=tf.float32,
-                                shape=(4,))
-        self.opt_placeholders = tf.placeholder(tf.float32, shape=(4,))
-        self.assign_opts = tf.assign(self.opts, self.opt_placeholders)
+
+def _non_negative_linear_curve(x: np.ndarray, a: float, b: float) -> np.ndarray:
+    return a * x + b
+
+
+class LogarithmicOrLinearFit:
+    def __init__(self) -> None:
+        self.log_opts = [0., 0., 0., 0.]
+        self.log_opts_var = tf.Variable(self.log_opts,
+                                        name='log_opts',
+                                        trainable=False,
+                                        dtype=tf.float32,
+                                        shape=(4,))
+        self.log_opt_placeholders = tf.placeholder(tf.float32, shape=(4,))
+        self.assign_log_opts = tf.assign(self.log_opts_var, self.log_opt_placeholders)
+
+        self.linear_opts = [0., 0.]
+        self.linear_opts_var = tf.Variable(self.linear_opts, name='linear_opts', trainable=False, dtype=tf.float32,
+                                           shape=(2,))
+        self.linear_opt_placeholders = tf.placeholder(tf.float32, shape=(2,))
+        self.assign_linear_opts = tf.assign(self.linear_opts_var, self.linear_opt_placeholders)
+
+        self.linear_version = True
+        self.linear_version_var = tf.Variable(True, name='linear_version', dtype=tf.bool, trainable=False,
+                                              shape=())
+        self.linear_version_placeholder = tf.placeholder(tf.bool, shape=())
+        self.assign_linear_version = tf.assign(self.linear_version_var, self.linear_version_placeholder)
 
         self.sess = tf.keras.backend.get_session()
-        self.sess.run(tf.variables_initializer([self.opts]))
 
-    def fit(self, bpps: Sequence[float], alphas: Sequence[float]) -> None:
-        if np.max(bpps) - np.min(bpps) < .2:
-            raise RuntimeError('The bpps are too close, skipping fit.')
+    def fit(self, x: Sequence[float], y: Sequence[float]) -> None:
+        if len(x) != len(y):
+            raise ValueError('Length of x and y should be same.')
 
-        popt, _ = curve_fit(log_curve, alphas, bpps)
-        self.sess.run(self.assign_opts, {self.opt_placeholders: popt})
+        try:
+            if len(x) < 4:
+                raise RuntimeError
 
-    def __call__(self, bpp: tf.Tensor) -> tf.Tensor:
-        value = (tf.exp(bpp / self.opts[0]) / tf.exp(self.opts[3] / self.opts[0]) - self.opts[2]) / self.opts[1]
-        return tf.maximum(0., value)
+            popt, _ = curve_fit(_non_negative_log_curve, x, y)
+            self.sess.run(self.assign_log_opts, {self.log_opt_placeholders: popt})
+            self.sess.run(self.assign_linear_version, {self.linear_version_placeholder: False})
+            self.linear_version = False
+            self.log_opts = popt
+        except RuntimeError:
+            try:
+                if len(x) < 2:
+                    raise RuntimeError
+                popt, _ = curve_fit(_non_negative_linear_curve, x, y)
+            except RuntimeError:
+                popt = [1., 0.]
 
-    def numpy_call(self, bpp: np.array) -> np.array:
-        a, b, c, d = self.sess.run(self.opts)
-        return np.maximum(0., (np.exp(bpp / a) / np.exp(d / a) - c) / b)
+            if abs(popt[0]) < 1e-6:
+                # virtually no change in Y depending on X, use the fallback a=1 b=0
+                popt = [1., 0.]
+
+            self.sess.run(self.assign_linear_opts, {self.linear_opt_placeholders: popt})
+            self.sess.run(self.assign_linear_version, {self.linear_version_placeholder: True})
+            self.linear_version = True
+            self.linear_opts = popt
+
+    def forward_numpy(self, x: np.ndarray) -> np.ndarray:
+        if self.linear_version:
+            return _non_negative_linear_curve(x, *self.linear_opts)
+        else:
+            return _non_negative_log_curve(x, *self.log_opts)
+
+    def forward_tf(self, x: tf.Tensor) -> tf.Tensor:
+        def linear_fn():
+            a = self.linear_opts_var[0]
+            b = self.linear_opts_var[1]
+            return tf.maximum(0., a * x + b)
+
+        def log_fn():
+            a = self.log_opts_var[0]
+            b = self.log_opts_var[1]
+            c = self.log_opts_var[2]
+            d = self.log_opts_var[3]
+            return tf.maximum(0., a * tf.log(tf.maximum(_log_eps, b * x + c)) + d)
+
+        return tf.cond(self.linear_version_var, true_fn=linear_fn, false_fn=log_fn)
+
+    def inverse_numpy(self, y: np.ndarray) -> np.ndarray:
+        if self.linear_version:
+            a, b = self.linear_opts
+            return (np.maximum(y, 0.) - b) / a
+        else:
+            a, b, c, d = self.log_opts
+            return np.maximum((np.exp((y - d) / a) - c) / b, 0.)
+
+    def inverse_tf(self, y: tf.Tensor) -> tf.Tensor:
+        def linear_fn():
+            a = self.linear_opts_var[0]
+            b = self.linear_opts_var[1]
+            return tf.maximum((y - b) / a, 0.)
+
+        def log_fn():
+            a = self.log_opts_var[0]
+            b = self.log_opts_var[1]
+            c = self.log_opts_var[2]
+            d = self.log_opts_var[3]
+
+            return tf.maximum((tf.exp((y - d) / a) - c) / b, 0.)
+
+        return tf.cond(self.linear_version_var, true_fn=linear_fn, false_fn=log_fn)
 
 
 class BppRangeAdapter:
@@ -56,7 +127,6 @@ class BppRangeAdapter:
                  eval_dataset_steps: int,
                  bpp_range: Tuple[float, float],
                  lmbda: float,
-                 initial_alpha_range: Tuple[float, float],
                  alpha_linspace_steps: int
                  ) -> None:
         self.bpp_range = bpp_range
@@ -71,7 +141,7 @@ class BppRangeAdapter:
         self._alpha_placeholder = tf.placeholder(tf.float32)
         self._assign_alpha = tf.assign(self._alpha, self._alpha_placeholder)
 
-        self.bpp_to_alpha = BppToAlphaFn(bpp_range=bpp_range, initial_alpha_range=initial_alpha_range)
+        self.alpha_to_bpp = LogarithmicOrLinearFit()
         self._update_current_alpha_linspace()
 
         batch = tf.compat.v1.data.make_one_shot_iterator(self.eval_dataset).get_next()
@@ -79,21 +149,18 @@ class BppRangeAdapter:
         compressor_output = self.compressor.forward(batch, training=False)
         self.bpp = bits_per_pixel(compressor_output['Y_likelihoods'], batch['X'].shape)
 
-        sess = tf.keras.backend.get_session()
-        sess.run(tf.variables_initializer([self._alpha]))
-
     def _update_current_alpha_linspace(self) -> None:
-        self.current_alpha_linspace = self.bpp_to_alpha.numpy_call(self.bpp_linspace)
+        self.current_alpha_linspace = self.alpha_to_bpp.inverse_numpy(self.bpp_linspace)
 
     def _compute_alpha_bpp(self) -> Tuple[np.array, np.array]:
         sess = tf.keras.backend.get_session()
-        alpha_linspace = self.bpp_to_alpha.numpy_call(self.bpp_linspace)
+        alpha_linspace = self.alpha_to_bpp.inverse_numpy(self.bpp_linspace)
 
         alphas = []
         mean_bpps = []
         for alpha in tqdm(alpha_linspace, desc='Evaluating alphas'):
             sess.run(self._assign_alpha, {self._alpha_placeholder: alpha})
-            bpps = []
+            bpps: List[np.array] = []
             for _ in trange(self.eval_dataset_steps):
                 bpps.extend(sess.run(self.bpp))
 
@@ -104,13 +171,13 @@ class BppRangeAdapter:
 
     def update(self) -> None:
         alphas, mean_bpps = self._compute_alpha_bpp()
-        self.bpp_to_alpha.fit(mean_bpps, alphas)
+        self.alpha_to_bpp.fit(alphas, mean_bpps)
         self._update_current_alpha_linspace()
 
     def add_computed_parameters(self, dataset_item: Dict[str, tf.Tensor]) -> Dict[str, tf.Tensor]:
         batch_size = tf.shape(dataset_item['X'])[0]
         random_bpps = tf.random.uniform((batch_size,), self.bpp_range[0], self.bpp_range[1])
-        random_alphas = self.bpp_to_alpha(random_bpps)
+        random_alphas = self.alpha_to_bpp.inverse_tf(random_bpps)
 
         dataset_item.update({
             'lambda': tf.repeat(self.lmbda, batch_size),
@@ -118,6 +185,12 @@ class BppRangeAdapter:
         })
 
         return dataset_item
+
+
+class ImageAlphaComparison:
+    alphas: List[float] = []
+    images: List[np.array] = []
+    original_image: np.array
 
 
 class BppRangeEvaluation:
@@ -153,20 +226,15 @@ class BppRangeEvaluation:
                              'lambda': batch['lambda'],
                              'X_tilde': clipped_X_tilde}
 
-    class ImageAlphaComparison:
-        alphas: List[float] = []
-        images: List[np.array] = []
-        original_image: np.array
-
     def evaluate(self, num_alpha_comparisons_pro_batch: int = 0) -> Tuple[pd.DataFrame, List[ImageAlphaComparison]]:
         data: Dict[str, List[float]] = {k: [] for k in self.eval_results.keys() if k not in ['X', 'X_tilde']}
         sess = tf.keras.backend.get_session()
-        alpha_comparisons: List[BppRangeEvaluation.ImageAlphaComparison] = []
+        alpha_comparisons: List[ImageAlphaComparison] = []
 
         for alpha in tqdm(self.bpp_range_adapter.current_alpha_linspace, desc='Alpha grid evaluation, alphas'):
             for _ in trange(self.val_dataset_steps, desc='Batches'):
                 # comparison_ids = None
-                # alpha_comparisons.extend([self.ImageAlphaComparison() for _ in range(num_alpha_comparisons_pro_batch)])
+                # alpha_comparisons.extend([ImageAlphaComparison() for _ in range(num_alpha_comparisons_pro_batch)])
 
                 results = sess.run(self.eval_results, {self.alpha_placeholder: alpha})
                 for key, collection in data.items():
@@ -190,17 +258,12 @@ def area_under_bpp_metric(bpps: np.array, metrics: np.array, bpp_range: Tuple[fl
         if len(bpps) < 4:
             raise RuntimeError
 
-        popt, _ = curve_fit(log_curve, bpps, metrics)
+        popt, _ = curve_fit(_non_negative_log_curve, bpps, metrics)
         a, b, c, d = popt
 
         bpp_linspace = np.linspace(*bpp_range, bpp_linspace_steps)
-        predicted_metrics = np.maximum(0., log_curve(bpp_linspace, a, b, c, d))
+        predicted_metrics = np.maximum(0., _non_negative_log_curve(bpp_linspace, a, b, c, d))
 
         return auc(bpp_linspace, predicted_metrics)
     except RuntimeError:
-        sorted_bpps = np.argsort(bpps)
-        bpps = bpps[sorted_bpps]
-        metrics = metrics[sorted_bpps]
-
-        bpps_within_range = np.logical_and(bpps >= bpp_range[0], bpps <= bpp_range[1])
-        return auc(bpps[bpps_within_range], metrics[bpps_within_range])
+        return 0.

@@ -27,7 +27,7 @@ class LRandWDScheduler(tfk.callbacks.Callback):
         self.base_lr = base_lr
         self.base_wd = base_wd
 
-    def on_epoch_begin(self, epoch, _):
+    def on_epoch_begin(self, epoch, logs=None):
         multiplier = self.multiplier_schedule(epoch)
         K.set_value(self.model.optimizer._optimizer.lr, self.base_lr * multiplier)
         K.set_value(self.model.optimizer._optimizer.weight_decay, self.base_wd * multiplier)

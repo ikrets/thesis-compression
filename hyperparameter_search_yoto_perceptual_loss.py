@@ -1,6 +1,5 @@
 import optuna
 import argparse
-import numpy as np
 import math
 from pathlib import Path
 
@@ -9,10 +8,7 @@ from models.compressors import SimpleFiLMCompressor
 from training_schemes import CompressorWithDownstreamLoss
 import models.downstream_losses
 import tensorflow.compat.v1 as tf
-from tensorboard.plugins.hparams import api as hp
 import coolname
-
-from models.utils import make_stepwise
 
 from experiment import save_experiment_params
 import datasets.cifar10
@@ -54,7 +50,7 @@ parser.add_argument('--num_trials', type=int)
 
 args = parser.parse_args()
 
-study = optuna.create_study(study_name=args.study_name, storage=f'sqlite:///{args.experiment_dir}.db')
+study = optuna.create_study(study_name=args.study_name, storage=f'sqlite:///{args.experiment_dir}/{args.study_name}.db')
 
 
 def objective(trial: optuna.Trial):
@@ -130,13 +126,13 @@ def objective(trial: optuna.Trial):
                                         eval_dataset_steps=val_steps,
                                         bpp_range=args.target_bpp_range,
                                         lmbda=trial.suggest_loguniform('lambda', *args.lambda_range),
-                                        initial_alpha_range=args.initial_alpha_range,
                                         alpha_linspace_steps=args.val_bpp_linspace_steps)
 
     compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
                                                                          downstream_loss,
-                                                                         bpp_range_adapter=bpp_range_adapter)
-
+                                                                         bpp_range_adapter=bpp_range_adapter,
+                                                                         initial_alpha_range=args.initial_alpha_range
+                                                                         )
 
     compressor_with_downstream_comparison.set_optimizers(main_optimizer=main_optimizer,
                                                          aux_optimizer=aux_optimizer,
@@ -155,5 +151,6 @@ def objective(trial: optuna.Trial):
                                                      val_log_period=args.val_summary_period,
                                                      checkpoint_period=args.checkpoint_period,
                                                      reevaluate_bpp_range_period=args.reevaluate_bpp_range_period)
+
 
 study.optimize(objective)

@@ -50,7 +50,8 @@ class DownstreamTaskTestCase(unittest.TestCase):
         loss = PerceptualLoss(readout_layers=['readout_1'],
                               model=model,
                               metric_fn=self.dummy_metric,
-                              normalize_activations=False)
+                              normalize_activations=False,
+                              preprocess_fn=lambda x: x)
         loss_value = loss.loss(X, X_rec)
         np.testing.assert_almost_equal(loss_value.shape.as_list(), (3, ))
         np.testing.assert_almost_equal(np.mean([readout_1_loss] * 3, axis=1), loss_value)

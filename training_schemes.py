@@ -5,6 +5,7 @@ import tensorflow as tf
 import numpy as np
 from matplotlib import pyplot as plt
 from tqdm import trange, tqdm
+from typing import Tuple
 
 from models.bpp_range import BppRangeEvaluation, area_under_bpp_metric, BppRangeAdapter
 from models.compressors import SimpleFiLMCompressor, bits_per_pixel
@@ -18,10 +19,12 @@ class CompressorWithDownstreamLoss:
     def __init__(self,
                  compressor: SimpleFiLMCompressor,
                  downstream_loss: PerceptualLoss,
-                 bpp_range_adapter: BppRangeAdapter) -> None:
+                 bpp_range_adapter: BppRangeAdapter,
+                 initial_alpha_range: Tuple[float, float]) -> None:
         self.compressor = compressor
         self.downstream_loss = downstream_loss
         self.bpp_range_adapter = bpp_range_adapter
+        self.initial_alpha_range = initial_alpha_range
 
     def set_optimizers(self, main_optimizer, aux_optimizer, main_lr, main_schedule):
         self.main_lr = main_lr
@@ -133,6 +136,8 @@ class CompressorWithDownstreamLoss:
 
         sess = tf.keras.backend.get_session()
         sess.run(tf.variables_initializer(initialize_variables + self._get_optimizer_variables()))
+        # TODO kind of weird needing to access alpha_to_bpp like that
+        self.bpp_range_adapter.alpha_to_bpp.fit(self.initial_alpha_range, self.bpp_range_adapter.bpp_range)
 
         train_logger = Logger(Path(log_dir) / 'train')
         val_logger = Logger(Path(log_dir) / 'val')

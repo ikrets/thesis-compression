@@ -1,8 +1,8 @@
-import numpy as np
 import argparse
 import subprocess
 from pathlib import Path
 from tqdm import tqdm
+from typing import Dict, Tuple, List
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, required=True)
@@ -12,7 +12,7 @@ parser.add_argument('--output_folder', type=str, required=True)
 args = parser.parse_args()
 
 dataset = list(Path(args.dataset).glob('**/*.png'))
-bpps = {}
+bpps: Dict[Tuple[int, int], List[float]] = {}
 target_dir = lambda qp, cfmt: f'{args.output_folder}/qp{qp}_cfmt{cfmt}'
 
 for img_name in tqdm(dataset):

@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 from tqdm import trange, tqdm
 
-from models.compressors import SimpleFiLMCompressor, pipeline_add_constant_parameters
+from models.compressors import SimpleFiLMCompressor
 from experiment import save_experiment_params
 
 parser = argparse.ArgumentParser()
@@ -85,9 +85,14 @@ for experiment in tqdm(experiments, desc='Experiments'):
                   training=False)
 
     weights = list(experiment.glob('compressor_epoch_*_weights.h5'))
-    epochs = [int(re.search('compressor_epoch_([0-9]+)_weights.h5', str(f)).group(1)) for f in weights]
-    print(f'Loading weights from epoch {max(epochs)}')
-    model.load_weights(str(weights[np.argmax(epochs)]))
+    matches = [re.search('compressor_epoch_([0-9]+)_weights.h5', str(f)) for f in weights]
+    epochs = [int(m.group(1)) for m in matches if m]
+    if epochs:
+        print(f'Loading weights from epoch {max(epochs)}')
+        model.load_weights(str(weights[max(range(len(epochs)), key=lambda x: epochs[x])]))
+    else:
+        print(f'No weights for experiment {experiment} found!')
+        continue
 
     sess = tf.keras.backend.get_session()
     for alpha in alpha_linspace:
