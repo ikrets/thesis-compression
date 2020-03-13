@@ -2,14 +2,15 @@ import optuna
 import argparse
 import math
 from pathlib import Path
+import tensorflow.compat.v1 as tf
+from tensorboard.plugins.hparams import api_pb2
+from tensorboard.plugins.hparams import summary
+import coolname
 
 from models.bpp_range import BppRangeAdapter
 from models.compressors import SimpleFiLMCompressor
 from training_schemes import CompressorWithDownstreamLoss
 import models.downstream_losses
-import tensorflow.compat.v1 as tf
-import coolname
-
 from experiment import save_experiment_params
 import datasets.cifar10
 
@@ -50,7 +51,8 @@ parser.add_argument('--num_trials', type=int)
 
 args = parser.parse_args()
 
-study = optuna.create_study(study_name=args.study_name, storage=f'sqlite:///{args.experiment_dir}/{args.study_name}.db')
+study = optuna.create_study(study_name=args.study_name, storage=f'sqlite:///{args.experiment_dir}/{args.study_name}.db',
+                            load_if_exists=True)
 
 
 def objective(trial: optuna.Trial):
@@ -144,13 +146,25 @@ def objective(trial: optuna.Trial):
     vars(params_namespace).update(trial.params)
     save_experiment_params(trial_dir, params_namespace)
 
-    return compressor_with_downstream_comparison.fit(train_dataset, train_steps,
-                                                     val_dataset, val_steps,
-                                                     epochs=args.epochs,
-                                                     log_dir=trial_dir,
-                                                     val_log_period=args.val_summary_period,
-                                                     checkpoint_period=args.checkpoint_period,
-                                                     reevaluate_bpp_range_period=args.reevaluate_bpp_range_period)
+    writer = tf.summary.FileWriter(trial_dir)
+    writer.add_summary(summary.session_start_pb(hparams=trial.params))
+    writer.flush()
+
+    try:
+        value = compressor_with_downstream_comparison.fit(train_dataset, train_steps,
+                                                          val_dataset, val_steps,
+                                                          epochs=args.epochs,
+                                                          log_dir=trial_dir,
+                                                          val_log_period=args.val_summary_period,
+                                                          checkpoint_period=args.checkpoint_period,
+                                                          reevaluate_bpp_range_period=args.reevaluate_bpp_range_period)
+        writer.add_summary(summary.session_end_pb(api_pb2.STATUS_SUCCESS))
+        return value
+
+
+    except:
+        writer.add_summary(summary.session_end_pb(api_pb2.STATUS_FAILURE))
+        return 0.
 
 
 study.optimize(objective)
