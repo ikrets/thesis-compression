@@ -99,15 +99,8 @@ class CompressorWithDownstreamLoss:
         return variables
 
     # TODO feed separate random parameter dataset and zip it with the train and validation sets!
-    def fit(self,
-            dataset, dataset_steps,
-            val_dataset, val_dataset_steps,
-            epochs,
-            log_dir,
-            val_log_period,
-            checkpoint_period,
-            reevaluate_bpp_range_period,
-            pruning_callback: Callable[[int, Dict[str, Sequence[float]]], bool] = None) -> float:
+    def fit(self, dataset, dataset_steps, val_dataset, val_dataset_steps, epochs, log_dir, val_log_period,
+            checkpoint_period, pruning_callback: Callable[[int, Dict[str, Sequence[float]]], bool] = None) -> float:
         main_lr_placeholder = tf.placeholder(dtype=tf.float32)
         assign_lr = tf.assign(self.main_lr, main_lr_placeholder)
 
@@ -138,7 +131,7 @@ class CompressorWithDownstreamLoss:
         sess = tf.keras.backend.get_session()
         sess.run(tf.variables_initializer(initialize_variables + self._get_optimizer_variables()))
         # TODO kind of weird needing to access alpha_to_bpp like that
-        self.bpp_range_adapter.alpha_to_bpp.fit(self.initial_alpha_range, self.bpp_range_adapter.bpp_range)
+        self.bpp_range_adapter.alpha_to_bpp.fit(self.initial_alpha_range, self.bpp_range_adapter.target_bpp_range)
 
         train_logger = Logger(Path(log_dir) / 'train')
         val_logger = Logger(Path(log_dir) / 'val')
@@ -182,18 +175,13 @@ class CompressorWithDownstreamLoss:
             if pruning_callback and pruning_callback(epoch, self.val_metrics):
                 tqdm.write('Pruned!')
 
-            if epoch % reevaluate_bpp_range_period == 0 and epoch:
-                try:
-                    self.bpp_range_adapter.update()
-                except RuntimeError:
-                    tqdm.write('Could not fit a bpp-alpha curve!')
-
             if epoch % val_log_period == 0 and epoch:
                 evaluation_df, alpha_comparisons = bpp_range_evaluator.evaluate(num_alpha_comparisons_pro_batch=0)
+                self.bpp_range_adapter.update(alphas=evaluation_df['alpha'].array, bpps=evaluation_df['bpp'].array)
                 val_logger.log_scalar('auc_bpp_metric',
                                       area_under_bpp_metric(evaluation_df['bpp'].array,
                                                             evaluation_df['downstream_metric'].array,
-                                                            self.bpp_range_adapter.bpp_range),
+                                                            self.bpp_range_adapter.target_bpp_range),
                                       step=epoch)
 
                 if alpha_comparisons:
@@ -216,4 +204,4 @@ class CompressorWithDownstreamLoss:
         evaluation_df, _ = bpp_range_evaluator.evaluate(num_alpha_comparisons_pro_batch=0)
         return area_under_bpp_metric(evaluation_df['bpp'].array,
                                      evaluation_df['downstream_metric'].array,
-                                     self.bpp_range_adapter.bpp_range)
+                                     self.bpp_range_adapter.target_bpp_range)

@@ -140,58 +140,51 @@ class BppRangeAdapter:
     def __init__(self, compressor: SimpleFiLMCompressor,
                  eval_dataset: tf.data.Dataset,
                  eval_dataset_steps: int,
-                 bpp_range: Tuple[float, float],
+                 target_bpp_range: Tuple[float, float],
                  lmbda: float,
-                 alpha_linspace_steps: int
+                 linspace_steps: int
                  ) -> None:
-        self.bpp_range = bpp_range
+        self.target_bpp_range = target_bpp_range
         self.compressor = compressor
         self.eval_dataset = eval_dataset
         self.eval_dataset_steps = eval_dataset_steps
         self.lmbda = lmbda
-        self.alpha_linspace_steps = alpha_linspace_steps
-        self.bpp_linspace = np.linspace(*self.bpp_range, self.alpha_linspace_steps)
+        self.linspace_steps = linspace_steps
+
+        self.current_bpp_range_var = tf.Variable(target_bpp_range, dtype=tf.float32, shape=(2,), trainable=False)
+        self.current_bpp_range_placeholder = tf.placeholder(dtype=tf.float32, shape=(2,))
+        self.assign_current_bpp_range = tf.assign(self.current_bpp_range_var, self.current_bpp_range_placeholder)
+        self.current_bpp_range = target_bpp_range
 
         self._alpha = tf.Variable(0.0, dtype=tf.float32, trainable=False)
         self._alpha_placeholder = tf.placeholder(tf.float32)
         self._assign_alpha = tf.assign(self._alpha, self._alpha_placeholder)
 
         self.alpha_to_bpp = LogarithmicOrLinearFit()
-        self._update_current_alpha_linspace()
 
         batch = tf.compat.v1.data.make_one_shot_iterator(self.eval_dataset).get_next()
         batch = pipeline_add_constant_parameters(batch, self._alpha, self.lmbda)
         compressor_output = self.compressor.forward(batch, training=False)
         self.bpp = bits_per_pixel(compressor_output['Y_likelihoods'], batch['X'].shape)
+        self.sess = tf.keras.backend.get_session()
 
-    def _update_current_alpha_linspace(self) -> None:
-        self.current_alpha_linspace = self.alpha_to_bpp.inverse_numpy(self.bpp_linspace)
+    @property
+    def current_alpha_linspace(self):
+        return self.alpha_to_bpp.inverse_numpy(np.linspace(*self.current_bpp_range, self.linspace_steps))
 
-    def _compute_alpha_bpp(self) -> Tuple[np.array, np.array]:
-        sess = tf.keras.backend.get_session()
-        alpha_linspace = self.alpha_to_bpp.inverse_numpy(self.bpp_linspace)
+    def update(self, alphas, bpps) -> None:
+        self.alpha_to_bpp.fit(alphas, bpps)
 
-        alphas = []
-        mean_bpps = []
-        for alpha in tqdm(alpha_linspace, desc='Evaluating alphas'):
-            sess.run(self._assign_alpha, {self._alpha_placeholder: alpha})
-            bpps: List[np.array] = []
-            for _ in trange(self.eval_dataset_steps):
-                bpps.extend(sess.run(self.bpp))
-
-            alphas.append(alpha)
-            mean_bpps.append(np.mean(bpps))
-
-        return alphas, mean_bpps
-
-    def update(self) -> None:
-        alphas, mean_bpps = self._compute_alpha_bpp()
-        self.alpha_to_bpp.fit(alphas, mean_bpps)
-        self._update_current_alpha_linspace()
+        min_observed = np.min(bpps)
+        max_observed = np.max(bpps)
+        new_min_bpp = min_observed + (max_observed - min_observed) / 4 * (self.target_bpp_range[0] - min_observed)
+        new_max_bpp = max_observed + (max_observed - min_observed) / 4 * (self.target_bpp_range[1] - max_observed)
+        self.current_bpp_range = (new_min_bpp, new_max_bpp)
+        self.sess.run(self.assign_current_bpp_range, {self.current_bpp_range_placeholder: (new_min_bpp, new_max_bpp)})
 
     def add_computed_parameters(self, dataset_item: Dict[str, tf.Tensor]) -> Dict[str, tf.Tensor]:
         batch_size = tf.shape(dataset_item['X'])[0]
-        random_bpps = tf.random.uniform((batch_size,), self.bpp_range[0], self.bpp_range[1])
+        random_bpps = tf.random.uniform((batch_size,), self.current_bpp_range_var[0], self.current_bpp_range_var[1])
         random_alphas = self.alpha_to_bpp.inverse_tf(random_bpps)
 
         dataset_item.update({

@@ -129,9 +129,9 @@ def objective(trial: optuna.Trial):
     bpp_range_adapter = BppRangeAdapter(compressor=compressor,
                                         eval_dataset=val_dataset,
                                         eval_dataset_steps=val_steps,
-                                        bpp_range=args.target_bpp_range,
+                                        target_bpp_range=args.target_bpp_range,
                                         lmbda=trial.suggest_loguniform('lambda', *args.lambda_range),
-                                        alpha_linspace_steps=args.val_bpp_linspace_steps)
+                                        linspace_steps=args.val_bpp_linspace_steps)
 
     compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
                                                                          downstream_loss,
@@ -163,13 +163,10 @@ def objective(trial: optuna.Trial):
         return False
 
     try:
-        value = compressor_with_downstream_comparison.fit(train_dataset, train_steps,
-                                                          val_dataset, val_steps,
-                                                          epochs=args.epochs,
-                                                          log_dir=trial_dir,
+        value = compressor_with_downstream_comparison.fit(train_dataset, train_steps, val_dataset, val_steps,
+                                                          epochs=args.epochs, log_dir=trial_dir,
                                                           val_log_period=args.val_summary_period,
                                                           checkpoint_period=args.checkpoint_period,
-                                                          reevaluate_bpp_range_period=args.reevaluate_bpp_range_period,
                                                           pruning_callback=pruning_callback)
         writer.add_summary(summary.session_end_pb(api_pb2.STATUS_SUCCESS))
         return value

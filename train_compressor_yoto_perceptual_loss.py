@@ -110,14 +110,14 @@ downstream_loss = models.downstream_losses.PerceptualLoss(
 bpp_range_adapter = BppRangeAdapter(compressor=compressor,
                                     eval_dataset=val_dataset,
                                     eval_dataset_steps=val_steps,
-                                    bpp_range=args.target_bpp_range,
+                                    target_bpp_range=args.target_bpp_range,
                                     lmbda=args.lmbda,
-                                    initial_alpha_range=args.initial_alpha_range,
-                                    alpha_linspace_steps=10)
+                                    linspace_steps=10)
 
 compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
                                                                      downstream_loss,
-                                                                     bpp_range_adapter=bpp_range_adapter)
+                                                                     bpp_range_adapter=bpp_range_adapter,
+                                                                     initial_alpha_range=args.initial_alpha_range)
 
 if not args.drop_lr_epochs:
     main_schedule = lambda _: args.main_lr
@@ -129,10 +129,6 @@ compressor_with_downstream_comparison.set_optimizers(main_optimizer=main_optimiz
                                                      main_lr=main_lr,
                                                      main_schedule=main_schedule)
 
-compressor_with_downstream_comparison.fit(train_dataset, train_steps,
-                                          val_dataset, val_steps,
-                                          epochs=args.epochs,
-                                          log_dir=experiment_dir,
-                                          val_log_period=args.val_summary_period,
-                                          checkpoint_period=args.checkpoint_period,
-                                          reevaluate_bpp_range_period=args.reevaluate_bpp_range_period)
+compressor_with_downstream_comparison.fit(train_dataset, train_steps, val_dataset, val_steps, epochs=args.epochs,
+                                          log_dir=experiment_dir, val_log_period=args.val_summary_period,
+                                          checkpoint_period=args.checkpoint_period)
