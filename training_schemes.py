@@ -5,7 +5,7 @@ import tensorflow as tf
 import numpy as np
 from matplotlib import pyplot as plt
 from tqdm import trange, tqdm
-from typing import Tuple
+from typing import Tuple, Callable, Dict, Sequence
 
 from models.bpp_range import BppRangeEvaluation, area_under_bpp_metric, BppRangeAdapter
 from models.compressors import SimpleFiLMCompressor, bits_per_pixel
@@ -106,7 +106,8 @@ class CompressorWithDownstreamLoss:
             log_dir,
             val_log_period,
             checkpoint_period,
-            reevaluate_bpp_range_period) -> float:
+            reevaluate_bpp_range_period,
+            pruning_callback: Callable[[int, Dict[str, Sequence[float]]], bool] = None) -> float:
         main_lr_placeholder = tf.placeholder(dtype=tf.float32)
         assign_lr = tf.assign(self.main_lr, main_lr_placeholder)
 
@@ -178,6 +179,8 @@ class CompressorWithDownstreamLoss:
                     val_logger.log_image('original_vs_reconstruction', comparison, step=epoch)
 
             self._log_accumulated(val_logger, epoch=epoch, training=False)
+            if pruning_callback and pruning_callback(epoch, self.val_metrics):
+                tqdm.write('Pruned!')
 
             if epoch % reevaluate_bpp_range_period == 0 and epoch:
                 try:

@@ -1,5 +1,6 @@
 import optuna
 import argparse
+import numpy as np
 import math
 from pathlib import Path
 import tensorflow.compat.v1 as tf
@@ -51,7 +52,9 @@ parser.add_argument('--num_trials', type=int)
 
 args = parser.parse_args()
 
-study = optuna.create_study(study_name=args.study_name, storage=f'sqlite:///{args.experiment_dir}/{args.study_name}.db',
+(Path(args.experiment_dir) / args.study_name).mkdir(parents=True, exist_ok=True)
+study = optuna.create_study(study_name=args.study_name,
+                            storage=f'sqlite:///{args.experiment_dir}/{args.study_name}/study.db',
                             load_if_exists=True)
 
 
@@ -150,6 +153,15 @@ def objective(trial: optuna.Trial):
     writer.add_summary(summary.session_start_pb(hparams=trial.params))
     writer.flush()
 
+    def pruning_callback(epoch, metrics):
+        if np.mean(metrics['bpp']) > 5 * np.mean(args.target_bpp_range) and epoch > 10:
+            return True
+
+        if np.mean(metrics['bpp']) > 1.5 * np.mean(args.target_bpp_range) and epoch > 50:
+            return True
+
+        return False
+
     try:
         value = compressor_with_downstream_comparison.fit(train_dataset, train_steps,
                                                           val_dataset, val_steps,
@@ -157,7 +169,8 @@ def objective(trial: optuna.Trial):
                                                           log_dir=trial_dir,
                                                           val_log_period=args.val_summary_period,
                                                           checkpoint_period=args.checkpoint_period,
-                                                          reevaluate_bpp_range_period=args.reevaluate_bpp_range_period)
+                                                          reevaluate_bpp_range_period=args.reevaluate_bpp_range_period,
+                                                          pruning_callback=pruning_callback)
         writer.add_summary(summary.session_end_pb(api_pb2.STATUS_SUCCESS))
         return value
 
