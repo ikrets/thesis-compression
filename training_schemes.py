@@ -204,6 +204,8 @@ class CompressorWithDownstreamLoss:
 
             if epoch % checkpoint_period == 0 and epoch:
                 self.compressor.save_weights(str(log_dir / f'compressor_epoch_{epoch}_weights.h5'))
+                with (log_dir / f'alpha_to_bpp_epoch_{epoch}.json').open('w') as fp:
+                    self.bpp_range_adapter.alpha_to_bpp.save(fp)
 
             train_logger.writer.flush()
             val_logger.writer.flush()

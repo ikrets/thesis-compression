@@ -1,7 +1,10 @@
 import unittest
 import tensorflow as tf
 import numpy as np
+from tempfile import TemporaryFile
+
 from models.bpp_range import LogarithmicOrLinearFit, area_under_bpp_metric
+
 
 
 class BppRangeTestCase(unittest.TestCase):
@@ -62,6 +65,21 @@ class BppRangeTestCase(unittest.TestCase):
                                    sess.run(alpha_to_bpp.inverse_tf(tf.constant(bpps))),
                                    err_msg='Inverse function on linear data is different between Numpy and TF',
                                    rtol=1e-5)
+
+    def test_logarithmic_or_linear_fit_load_save(self):
+        f = LogarithmicOrLinearFit()
+        x = np.linspace(1., 2.44, 1000)
+        y = 3 * np.log(x - 0.7) + 11
+
+        f.fit(x, y)
+        with TemporaryFile('w+') as fp:
+            f.save(fp)
+            fp.seek(0)
+
+            loaded_f = LogarithmicOrLinearFit.load(fp)
+            np.testing.assert_array_equal(f.forward_numpy(x), loaded_f.forward_numpy(x))
+            np.testing.assert_array_equal(f.inverse_numpy(y), loaded_f.inverse_numpy(y))
+
 
     def test_auc_bpp_metric(self):
         bpps = np.linspace(1., 2., 1000)

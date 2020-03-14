@@ -1,3 +1,5 @@
+import json
+
 import tensorflow as tf
 import pandas as pd
 import numpy as np
@@ -5,7 +7,7 @@ from models.compressors import SimpleFiLMCompressor, bits_per_pixel, pipeline_ad
 from scipy.optimize import curve_fit
 from sklearn.metrics import auc
 from tqdm import tqdm, trange
-from typing import Tuple, Sequence, Dict, List
+from typing import Tuple, Sequence, Dict, List, TextIO
 
 from models.downstream_losses import PerceptualLoss
 
@@ -21,8 +23,8 @@ def _non_negative_linear_curve(x: np.ndarray, a: float, b: float) -> np.ndarray:
 
 
 class LogarithmicOrLinearFit:
-    def __init__(self) -> None:
-        self.log_opts = [0., 0., 0., 0.]
+    def __init__(self, linear_version=True, linear_opts=(0., 0.), log_opts=(0., 0., 0., 0.)) -> None:
+        self.log_opts = log_opts
         self.log_opts_var = tf.Variable(self.log_opts,
                                         name='log_opts',
                                         trainable=False,
@@ -31,13 +33,13 @@ class LogarithmicOrLinearFit:
         self.log_opt_placeholders = tf.placeholder(tf.float32, shape=(4,))
         self.assign_log_opts = tf.assign(self.log_opts_var, self.log_opt_placeholders)
 
-        self.linear_opts = [0., 0.]
+        self.linear_opts = linear_opts
         self.linear_opts_var = tf.Variable(self.linear_opts, name='linear_opts', trainable=False, dtype=tf.float32,
                                            shape=(2,))
         self.linear_opt_placeholders = tf.placeholder(tf.float32, shape=(2,))
         self.assign_linear_opts = tf.assign(self.linear_opts_var, self.linear_opt_placeholders)
 
-        self.linear_version = True
+        self.linear_version = linear_version
         self.linear_version_var = tf.Variable(True, name='linear_version', dtype=tf.bool, trainable=False,
                                               shape=())
         self.linear_version_placeholder = tf.placeholder(tf.bool, shape=())
@@ -119,6 +121,19 @@ class LogarithmicOrLinearFit:
             return tf.maximum((tf.exp((y - d) / a) - c) / b, 0.)
 
         return tf.cond(self.linear_version_var, true_fn=linear_fn, false_fn=log_fn)
+
+    def save(self, fp):
+        json.dump({'linear_version': self.linear_version,
+                   'opts': tuple(self.linear_opts if self.linear_version else self.log_opts)}, fp)
+
+    @staticmethod
+    def load(fp: TextIO) -> 'LogarithmicOrLinearFit':
+        params = json.load(fp)
+
+        if params['linear_version']:
+            return LogarithmicOrLinearFit(linear_version=True, linear_opts=params['opts'])
+        else:
+            return LogarithmicOrLinearFit(linear_version=False, log_opts=params['opts'])
 
 
 class BppRangeAdapter:
