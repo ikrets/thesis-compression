@@ -252,18 +252,15 @@ class BppRangeEvaluation:
         return df, alpha_comparisons
 
 
-def area_under_bpp_metric(bpps: np.array, metrics: np.array, bpp_range: Tuple[float, float],
-                          bpp_linspace_steps: int = 10) -> float:
-    try:
-        if len(bpps) < 4:
-            raise RuntimeError
+def area_under_bpp_metric(bpps: np.array, metrics: np.array, bpp_range: Tuple[float, float]) -> float:
+    bpps_within_range = (bpps >= bpp_range[0]) & (bpps <= bpp_range[1])
+    bpps_filtered = bpps[bpps_within_range]
+    metrics_filtered = metrics[bpps_within_range]
 
-        popt, _ = curve_fit(_non_negative_log_curve, bpps, metrics)
-        a, b, c, d = popt
+    bpps_ordered = bpps_filtered[np.argsort(bpps_filtered)]
+    metrics_ordered = metrics_filtered[np.argsort(bpps_filtered)]
 
-        bpp_linspace = np.linspace(*bpp_range, bpp_linspace_steps)
-        predicted_metrics = np.maximum(0., _non_negative_log_curve(bpp_linspace, a, b, c, d))
-
-        return auc(bpp_linspace, predicted_metrics)
-    except RuntimeError:
+    if len(bpps_ordered) < 2:
         return 0.
+
+    return auc(bpps_ordered, metrics_ordered)
