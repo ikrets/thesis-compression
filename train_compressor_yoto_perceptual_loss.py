@@ -73,7 +73,7 @@ with tf.device("/cpu:0"):
     train_filenames = list((dataset / 'train').glob('**/*.png'))
     train_dataset = datasets.cifar10.pipeline(filenames=train_filenames,
                                               flip=True,
-                                              crop=False,
+                                              crop=True,
                                               batch_size=args.batchsize,
                                               shuffle_buffer_size=10000,
                                               classifier_normalize=False,

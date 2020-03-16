@@ -86,7 +86,7 @@ def objective(trial: optuna.Trial):
         batch_size = int(trial.suggest_discrete_uniform('batch_size', *args.batch_size_range, q=16))
         train_dataset = datasets.cifar10.pipeline(filenames=train_filenames,
                                                   flip=True,
-                                                  crop=False,
+                                                  crop=True,
                                                   batch_size=batch_size,
                                                   shuffle_buffer_size=10000,
                                                   classifier_normalize=False,
