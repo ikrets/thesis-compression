@@ -2,3 +2,4 @@
 __*__
 venv
 notebooks
+*.sh
