@@ -1,6 +1,8 @@
 import argparse
 import math
 from pathlib import Path
+from tensorboard.plugins.hparams import api_pb2
+from tensorboard.plugins.hparams import summary
 
 from models.bpp_range import BppRangeAdapter
 from models.compressors import SimpleFiLMCompressor
@@ -90,7 +92,7 @@ with tf.device("/cpu:0"):
                                             classifier_normalize=False,
                                             num_parallel_calls=8)
     val_dataset = val_dataset.map(lambda X, label: {'X': X, 'label': label},
-                                      num_parallel_calls=tf.data.experimental.AUTOTUNE)
+                                  num_parallel_calls=tf.data.experimental.AUTOTUNE)
     val_dataset = val_dataset.prefetch(1)
     val_steps = math.ceil(len(val_filenames) / args.eval_batchsize)
 
@@ -129,6 +131,23 @@ compressor_with_downstream_comparison.set_optimizers(main_optimizer=main_optimiz
                                                      main_lr=main_lr,
                                                      main_schedule=main_schedule)
 
+hparams = {
+    'main_lr': args.main_lr,
+    'filters': args.num_filters,
+    'depth': args.depth,
+    'film_depth': args.film_depth,
+    'film_width': args.film_width,
+    'batch_size': args.batchsize,
+    'perceptual_loss_readouts': args.perceptual_loss_readouts,
+    'perceptual_loss_normalize_activations': args.perceptual_loss_normalize_activations,
+    'lambda': args.lmbda,
+    'target_bpp_range': args.target_bpp_range
+}
+writer = tf.summary.FileWriter(experiment_dir)
+writer.add_summary(summary.session_start_pb(hparams=hparams))
+writer.flush()
+
 compressor_with_downstream_comparison.fit(train_dataset, train_steps, val_dataset, val_steps, epochs=args.epochs,
                                           log_dir=experiment_dir, val_log_period=args.val_summary_period,
                                           checkpoint_period=args.checkpoint_period)
+writer.add_summary(summary.session_end_pb(api_pb2.STATUS_SUCCESS))
