@@ -141,9 +141,8 @@ for experiment in tqdm(experiments, desc='Experiments'):
     X_reconstructed = tf.cast(tf.clip_by_value(X_reconstructed, 0, 1) * 255, tf.uint8)
 
     bpp_linspace = np.linspace(*parameters['target_bpp_range'], args.bpp_range_steps)
-    for bpp in tqdm(bpp_linspace, desc='Evaluating bpps'):
-        alpha = alpha_to_bpp.inverse_numpy(np.array([bpp]))[0]
-
+    alpha_linspace = np.unique(alpha_to_bpp.inverse_numpy(bpp_linspace))
+    for alpha in tqdm(alpha_linspace, desc='Evaluating bpps'):
         for batch in trange(np.ceil(len(files) / args.batchsize).astype(int), desc='Batches'):
             range_coded_bpp_result, X_reconstructed_result, name_result = sess.run(
                 [range_coded_bpp, X_reconstructed, item['name']], {alpha_placeholder: alpha})
