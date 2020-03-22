@@ -214,6 +214,22 @@ class SimpleFiLMCompressor(tfk.Model):
 
         return results
 
+    def forward_with_range_coding(self, item):
+        parameters = tf.stack([item['alpha'], item['lambda']], axis=-1)
+        Y = self.analysis_transform([parameters, item['X']])
+        Y_range_coded = self.entropy_bottleneck.compress(Y)
+        Y_decoded = self.entropy_bottleneck.decompress(Y_range_coded, shape=tf.shape(Y)[1:3],
+                                                       channels=tf.shape(Y)[3])
+        X_reconstructed = self.synthesis_transform([parameters, Y_decoded])
+        height = tf.shape(item['X'])[1]
+        width = tf.shape(item['X'])[2]
+        range_coded_bpp = tf.strings.length(Y_range_coded) * 8 / (height * width)
+
+        return {
+            'X_reconstructed': X_reconstructed,
+            'range_coded_bpp': range_coded_bpp
+        }
+
 
 def bits_per_pixel(Y_likelihoods, X_shape):
     num_pixels = tf.cast(X_shape[1] * X_shape[2], tf.float32)

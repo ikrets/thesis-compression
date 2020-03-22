@@ -1,13 +1,15 @@
 import copy
+import json
+import re
 from pathlib import Path
 
 import tensorflow as tf
 import numpy as np
 from matplotlib import pyplot as plt
 from tqdm import trange, tqdm
-from typing import Tuple, Callable, Dict, Sequence
+from typing import Tuple, Callable, Dict, Sequence, Union, Optional, Any
 
-from models.bpp_range import BppRangeEvaluation, area_under_bpp_metric, BppRangeAdapter
+from models.bpp_range import BppRangeEvaluation, area_under_bpp_metric, BppRangeAdapter, LogarithmicOrLinearFit
 from models.compressors import SimpleFiLMCompressor, bits_per_pixel
 from models.downstream_losses import PerceptualLoss
 from visualization.plots import alpha_comparison, figure_to_numpy, rate_distortion_curve
@@ -205,3 +207,40 @@ class CompressorWithDownstreamLoss:
         return area_under_bpp_metric(evaluation_df['bpp'].array,
                                      evaluation_df['downstream_metric'].array,
                                      self.bpp_range_adapter.target_bpp_range)
+
+
+def load_compressor_with_range(
+        experiment_path: Union[str, Path],
+        epoch: Optional[int] = None
+) -> Tuple[SimpleFiLMCompressor, LogarithmicOrLinearFit, Dict[str, Any]]:
+    experiment_path = Path(experiment_path)
+    with (experiment_path / 'parameters.json').open('r') as fp:
+        parameters = json.load(fp)
+
+    model = SimpleFiLMCompressor(num_filters=parameters['num_filters'],
+                                 depth=parameters['depth'],
+                                 num_postproc=parameters['num_postproc'],
+                                 FiLM_width=parameters['film_width'],
+                                 FiLM_depth=parameters['film_depth'],
+                                 FiLM_activation=parameters['film_activation'])
+    model.forward(item={'X': np.zeros((128, 32, 32, 3)).astype(np.float32),
+                        'alpha': np.zeros(128).astype(np.float32),
+                        'lambda': np.zeros(128).astype(np.float32)},
+                  training=False)
+
+    weights = list(experiment_path.glob('compressor_epoch_*_weights.h5'))
+    matches = [re.search('compressor_epoch_([0-9]+)_weights.h5', str(f)) for f in weights]
+    epochs = [int(m.group(1)) for m in matches if m]
+
+    if epoch is None:
+        if not epochs:
+            raise RuntimeError('No weights found!')
+
+        epoch = max(epochs)
+
+    print(f'Loading weights and alpha-bpp fit from epoch {epoch}')
+    model.load_weights(str(experiment_path / f'compressor_epoch_{epoch}_weights.h5'))
+    with (experiment_path / f'alpha_to_bpp_epoch_{epoch}.json').open('r') as fp:
+        alpha_to_bpp = LogarithmicOrLinearFit.load(fp)
+
+    return model, alpha_to_bpp, parameters

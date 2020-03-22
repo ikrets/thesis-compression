@@ -133,7 +133,7 @@ for experiment in tqdm(experiments, desc='Experiments'):
                         'lambda': lambdas}
     compressed_batch = model.forward(item_with_params, training=False)
     Y_range_coded = model.entropy_bottleneck.compress(compressed_batch['Y'])
-    range_coded_bpp = tf.strings.length(Y_range_coded) / 32 / 32
+    range_coded_bpp = tf.strings.length(Y_range_coded) * 8 / 32 / 32
     Y_decoded = model.entropy_bottleneck.decompress(Y_range_coded, shape=compressed_batch['Y'].shape[1:3],
                                                     channels=compressed_batch['Y'].shape[3])
     parameters_stacked = tf.stack([alphas, lambdas], axis=-1)

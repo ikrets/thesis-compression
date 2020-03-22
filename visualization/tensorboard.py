@@ -1,5 +1,6 @@
-import tensorflow as tf
 import numpy as np
+import inspect
+from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -13,7 +14,8 @@ def draw_text_line(text_batch, background_color, font_color, font_size, cell_dim
     line = np.ones((cell_dimension[0], cell_dimension[1] * len(text_batch), 3)) * background_color
     image = Image.fromarray(line.astype(np.uint8))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype('visualization/Roboto-Regular.ttf', size=font_size)
+    dir = inspect.getfile(draw_text_line)
+    font = ImageFont.truetype(str(Path(dir).parent / 'Roboto-Regular.ttf'), size=font_size)
 
     for i, text in enumerate(text_batch):
         draw.text((i * cell_dimension[1], 0), text, fill=font_color, font=font)

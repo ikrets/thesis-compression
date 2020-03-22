@@ -39,7 +39,7 @@ def read_images(dir: Union[str, Path]) -> Tuple[tf.data.Dataset, int]:
 
 
 def read_compressed_tfrecords(files: Sequence[Union[str, Path]]) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
-    dataset = tf.data.TFRecordDataset([files])
+    dataset = tf.data.TFRecordDataset([str(f) for f in files])
 
     dataset = dataset.map(datasets.compressed.deserialize_example, AUTO)
     train_dataset = dataset.filter(lambda item: tf.strings.regex_full_match(item['name'], '.*train.*'))
