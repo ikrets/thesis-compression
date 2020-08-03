@@ -1,10 +1,11 @@
 import argparse
 import math
+import matplotlib.pyplot as plt
 from pathlib import Path
 from tensorboard.plugins.hparams import api_pb2
 from tensorboard.plugins.hparams import summary
 
-from models.bpp_range import BppRangeAdapter
+from models.bpp_range import BppRangeAdapter, BppRangeEvaluation, area_under_bpp_metric
 from models.compressors import SimpleFiLMCompressor
 from training_schemes import CompressorWithDownstreamLoss
 import models.downstream_losses
@@ -72,29 +73,28 @@ compressor = SimpleFiLMCompressor(num_filters=args.num_filters,
 
 with tf.device("/cpu:0"):
     dataset = Path(args.dataset)
-    train_filenames = list((dataset / 'train').glob('**/*.png'))
-    train_dataset = datasets.cifar10.pipeline(filenames=train_filenames,
+    data_train, train_examples = datasets.cifar10.read_images(dataset / 'train')
+    data_test, test_examples = datasets.cifar10.read_images(dataset / 'test')
+
+    train_dataset = datasets.cifar10.pipeline(data_train,
                                               flip=True,
                                               crop=True,
                                               batch_size=args.batchsize,
                                               shuffle_buffer_size=10000,
-                                              classifier_normalize=False,
-                                              num_parallel_calls=8)
+                                              classifier_normalize=False)
     train_dataset = train_dataset.map(lambda X, label: {'X': X, 'label': label},
                                       num_parallel_calls=tf.data.experimental.AUTOTUNE)
     train_dataset = train_dataset.prefetch(1)
-    train_steps = math.ceil(len(train_filenames) / args.batchsize)
-    val_filenames = list((dataset / 'test').glob('**/*.png'))
-    val_dataset = datasets.cifar10.pipeline(filenames=val_filenames,
+    train_steps = math.ceil(train_examples / args.batchsize)
+    val_dataset = datasets.cifar10.pipeline(data_test,
                                             flip=False,
                                             crop=False,
                                             batch_size=args.eval_batchsize,
-                                            classifier_normalize=False,
-                                            num_parallel_calls=8)
+                                            classifier_normalize=False)
     val_dataset = val_dataset.map(lambda X, label: {'X': X, 'label': label},
                                   num_parallel_calls=tf.data.experimental.AUTOTUNE)
     val_dataset = val_dataset.prefetch(1)
-    val_steps = math.ceil(len(val_filenames) / args.eval_batchsize)
+    val_steps = math.ceil(test_examples / args.eval_batchsize)
 
 downstream_model = tf.keras.models.load_model(args.downstream_model)
 if args.downstream_model_weights:
@@ -115,11 +115,16 @@ bpp_range_adapter = BppRangeAdapter(compressor=compressor,
                                     target_bpp_range=args.target_bpp_range,
                                     lmbda=args.lmbda,
                                     linspace_steps=10)
+bpp_range_evaluator = BppRangeEvaluation(compressor=compressor,
+                                         downstream_loss=downstream_loss,
+                                         bpp_range_adapter=bpp_range_adapter,
+                                         val_dataset=val_dataset,
+                                         val_dataset_steps=val_steps,
+                                         log_dir=experiment_dir)
+bpp_range_adapter.alpha_to_bpp.fit(args.initial_alpha_range, args.target_bpp_range)
 
 compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
-                                                                     downstream_loss,
-                                                                     bpp_range_adapter=bpp_range_adapter,
-                                                                     initial_alpha_range=args.initial_alpha_range)
+                                                                     downstream_loss)
 
 if not args.drop_lr_epochs:
     main_schedule = lambda _: args.main_lr
@@ -147,7 +152,10 @@ writer = tf.summary.FileWriter(experiment_dir)
 writer.add_summary(summary.session_start_pb(hparams=hparams))
 writer.flush()
 
-compressor_with_downstream_comparison.fit(train_dataset, train_steps, val_dataset, val_steps, epochs=args.epochs,
+compressor_with_downstream_comparison.fit(train_dataset, train_steps, val_dataset, val_steps,
+                                          add_parameters_fn=bpp_range_adapter.add_computed_parameters,
+                                          epochs=args.epochs,
                                           log_dir=experiment_dir, val_log_period=args.val_summary_period,
-                                          checkpoint_period=args.checkpoint_period)
+                                          checkpoint_period=args.checkpoint_period,
+                                          callbacks=[bpp_range_evaluator.callback])
 writer.add_summary(summary.session_end_pb(api_pb2.STATUS_SUCCESS))

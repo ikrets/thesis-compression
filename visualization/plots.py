@@ -5,9 +5,6 @@ import cv2
 import numpy as np
 from typing import List
 
-from models.bpp_range import ImageAlphaComparison
-
-
 def figure_to_numpy(fig):
     with BytesIO() as fp:
         fig.savefig(fp, format='png')
@@ -66,7 +63,7 @@ def rate_distortion_curve(compression_eval_df,
     return fig
 
 
-def alpha_comparison(alpha_comparisons: List[ImageAlphaComparison]) -> np.array:
+def alpha_comparison(alpha_comparisons: List['ImageAlphaComparison']) -> np.array:
     height, width = alpha_comparisons[0].original_image.shape[1:3]
     rows = len(alpha_comparisons)
     columns = len(alpha_comparisons[0].alphas)

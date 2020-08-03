@@ -3,13 +3,16 @@ import json
 import tensorflow as tf
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from models.compressors import SimpleFiLMCompressor, bits_per_pixel, pipeline_add_constant_parameters
 from scipy.optimize import curve_fit
 from sklearn.metrics import auc
 from tqdm import tqdm, trange
 from typing import Tuple, Sequence, Dict, List, TextIO
+from pathlib import Path
 
 from models.downstream_losses import PerceptualLoss
+from visualization.plots import alpha_comparison, figure_to_numpy, rate_distortion_curve
 
 _log_eps = 1e-5
 
@@ -208,12 +211,14 @@ class BppRangeEvaluation:
                  bpp_range_adapter: BppRangeAdapter,
                  val_dataset: tf.data.Dataset,
                  val_dataset_steps: int,
+                 log_dir: str
                  ) -> None:
         self.compressor = compressor
         self.downstream_loss = downstream_loss
         self.bpp_range_adapter = bpp_range_adapter
         self.val_dataset = val_dataset
         self.val_dataset_steps = val_dataset_steps
+        self.log_dir = Path(log_dir)
 
         self.alpha_placeholder = tf.placeholder(tf.float32)
         batch = self.val_dataset.make_one_shot_iterator().get_next()
@@ -258,6 +263,26 @@ class BppRangeEvaluation:
 
         df = pd.DataFrame(data).groupby('alpha').mean().reset_index()
         return df, alpha_comparisons
+
+    def callback(self, epoch: int, val_logger: tf.summary.FileWriter) -> None:
+        evaluation_df, alpha_comparisons = self.evaluate(num_alpha_comparisons_pro_batch=0)
+        self.bpp_range_adapter.update(alphas=evaluation_df['alpha'].array, bpps=evaluation_df['bpp'].array)
+        val_logger.log_scalar('auc_bpp_metric',
+                              area_under_bpp_metric(evaluation_df['bpp'].array,
+                                                    evaluation_df['downstream_metric'].array,
+                                                    self.bpp_range_adapter.target_bpp_range),
+                              step=epoch)
+
+        if alpha_comparisons:
+            val_logger.log_image('alpha_comparisons', alpha_comparison(alpha_comparisons), step=epoch)
+        with (self.log_dir / f'alpha_to_bpp_epoch_{epoch}.json').open('w') as fp:
+            self.bpp_range_adapter.alpha_to_bpp.save(fp)
+
+        plt_img = figure_to_numpy(rate_distortion_curve(evaluation_df, figsize=(12, 12),
+                                                        downstream_metrics=['downstream_loss',
+                                                                            'downstream_metric']))
+        val_logger.log_image('parameters_rate_distortion', plt_img, step=epoch)
+        plt.close()
 
 
 def area_under_bpp_metric(bpps: np.array, metrics: np.array, bpp_range: Tuple[float, float]) -> float:
