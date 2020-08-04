@@ -9,6 +9,7 @@ from matplotlib import pyplot as plt
 from tqdm import trange, tqdm
 from typing import Tuple, Callable, Dict, Sequence, Union, Optional, Any
 
+import datasets
 from models.bpp_range import BppRangeEvaluation, area_under_bpp_metric, BppRangeAdapter, LogarithmicOrLinearFit
 from models.compressors import SimpleFiLMCompressor, bits_per_pixel
 from models.downstream_losses import PerceptualLoss
@@ -97,18 +98,18 @@ class CompressorWithDownstreamLoss:
         return variables
 
     # TODO feed separate random parameter dataset and zip it with the train and validation sets!
-    def fit(self, dataset, dataset_steps, val_dataset, val_dataset_steps, add_parameters_fn, epochs, log_dir,
+    def fit(self, dataset_setup: datasets.DatasetSetup, add_parameters_fn, epochs, log_dir,
             val_log_period,
             checkpoint_period, callbacks: Sequence[Callable[[int, tf.summary.FileWriter], None]] = ()) -> None:
         main_lr_placeholder = tf.placeholder(dtype=tf.float32)
         assign_lr = tf.assign(self.main_lr, main_lr_placeholder)
 
         train_outputs_losses_metrics = self._get_outputs_losses_metrics(
-            dataset,
+            dataset_setup.train_dataset,
             add_parameters_fn=add_parameters_fn,
             training=True)
         val_outputs_losses_metrics = self._get_outputs_losses_metrics(
-            val_dataset,
+            dataset_setup.val_dataset,
             add_parameters_fn=add_parameters_fn,
             training=False)
 
@@ -133,7 +134,7 @@ class CompressorWithDownstreamLoss:
             sess.run(assign_lr, feed_dict={main_lr_placeholder: self.main_schedule(epoch)})
             train_logger.log_scalar('main_lr', self.main_schedule(epoch), step=epoch)
 
-            for train_step in trange(dataset_steps, desc='train batch'):
+            for train_step in trange(dataset_setup.train_steps, desc='train batch'):
                 train_results, _ = sess.run([train_outputs_losses_metrics, train_steps])
 
                 self._accumulate(train_results, training=True)
@@ -149,8 +150,8 @@ class CompressorWithDownstreamLoss:
 
             self._log_accumulated(train_logger, epoch=epoch, training=True)
 
-            visualize_step = np.random.choice(np.arange(val_dataset_steps))
-            for val_step in trange(val_dataset_steps, desc='val batch with random parameters'):
+            visualize_step = np.random.choice(np.arange(dataset_setup.val_steps))
+            for val_step in trange(dataset_setup.val_steps, desc='val batch with random parameters'):
                 val_results = sess.run(val_outputs_losses_metrics)
                 self._accumulate(val_results, training=False)
 

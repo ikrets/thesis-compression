@@ -25,6 +25,7 @@ class PerceptualLoss:
     def loss(self,
              X: tf.Tensor,
              X_reconstruction: tf.Tensor) -> tf.Tensor:
+
         original_readouts = self.model_readouts(self.preprocess_fn(X))
         reconstruction_readouts = self.model_readouts(self.preprocess_fn(X_reconstruction))
 

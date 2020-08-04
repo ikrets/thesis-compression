@@ -48,7 +48,7 @@ class FiLM(tfkl.Layer):
 class AnalysisTransform(tfkl.Layer):
     """The analysis transform."""
 
-    def __init__(self, num_filters, depth, num_postproc, use_FiLM, FiLM_depth=None, FiLM_width=None,
+    def __init__(self, num_filters, depth, num_postproc, FiLM_depth=None, FiLM_width=None,
                  FiLM_activation=None, *args,
                  **kwargs):
         super(AnalysisTransform, self).__init__(*args, **kwargs)
@@ -57,12 +57,10 @@ class AnalysisTransform(tfkl.Layer):
         self.depth = depth
         self.num_postproc = num_postproc
 
-        self.use_FiLM = use_FiLM
+        self.use_FiLM = FiLM_depth
         self.FiLM_width = FiLM_width
         self.FiLM_depth = FiLM_depth
         self.FiLM_activation = FiLM_activation
-        if self.use_FiLM and not FiLM_width or not FiLM_depth or not FiLM_activation:
-            raise ValueError('If use_FiLM is set, other FiLM parameters must be set too!')
 
         self.layers = []
         for i in range(self.depth):
@@ -89,10 +87,7 @@ class AnalysisTransform(tfkl.Layer):
                     self.layers.append(tfc.GDN(name=f'gdn_{i}_postproc_{j}'))
 
     def build(self, input_shape):
-        if not self.use_FiLM:
-            feature_maps_shape = input_shape
-        else:
-            parameters_shape, feature_maps_shape = input_shape
+        parameters_shape, feature_maps_shape = input_shape
 
         for layer in self.layers:
             if isinstance(layer, FiLM):
@@ -101,10 +96,7 @@ class AnalysisTransform(tfkl.Layer):
                 feature_maps_shape = layer.compute_output_shape(feature_maps_shape)
 
     def call(self, input_tensor):
-        if not self.use_FiLM:
-            feature_maps = input_tensor
-        else:
-            parameters, feature_maps = input_tensor
+        parameters, feature_maps = input_tensor
 
         for layer in self.layers:
             if isinstance(layer, FiLM):
@@ -118,7 +110,7 @@ class AnalysisTransform(tfkl.Layer):
 class SynthesisTransform(tfkl.Layer):
     """The synthesis transform."""
 
-    def __init__(self, num_filters, depth, num_postproc, use_FiLM, FiLM_depth=None, FiLM_width=None,
+    def __init__(self, num_filters, depth, num_postproc, FiLM_depth=None, FiLM_width=None,
                  FiLM_activation=None, *args,
                  **kwargs):
         super(SynthesisTransform, self).__init__(*args, **kwargs)
@@ -126,10 +118,7 @@ class SynthesisTransform(tfkl.Layer):
         self.num_filters = num_filters
         self.depth = depth
         self.num_postproc = num_postproc
-        self.use_FiLM = use_FiLM
-        if not FiLM_width or not FiLM_depth or not FiLM_activation:
-            raise ValueError('If use_FiLM is set, other FiLM parameters must be set too!')
-
+        self.use_FiLM = FiLM_depth
         self.FiLM_width = FiLM_width
         self.FiLM_depth = FiLM_depth
         self.FiLM_activation = FiLM_activation
@@ -163,10 +152,7 @@ class SynthesisTransform(tfkl.Layer):
                     self.layers.append(tfc.GDN(name=f'igdn_{i}_postproc_{j}', inverse=True))
 
     def build(self, input_shape):
-        if not self.use_FiLM:
-            feature_maps_shape = input_shape
-        else:
-            parameters_shape, feature_maps_shape = input_shape
+        parameters_shape, feature_maps_shape = input_shape
 
         for layer in self.layers:
             if isinstance(layer, FiLM):
@@ -175,10 +161,7 @@ class SynthesisTransform(tfkl.Layer):
                 feature_maps_shape = layer.compute_output_shape(feature_maps_shape)
 
     def call(self, input_tensor):
-        if not self.use_FiLM:
-            feature_maps = input_tensor
-        else:
-            parameters, feature_maps = input_tensor
+        parameters, feature_maps = input_tensor
 
         for layer in self.layers:
             if isinstance(layer, FiLM):
@@ -193,10 +176,11 @@ class SimpleFiLMCompressor(tfk.Model):
     def __init__(self, num_filters, depth, num_postproc, FiLM_depth, FiLM_width, FiLM_activation, **kwargs):
         super(SimpleFiLMCompressor, self).__init__(**kwargs)
 
-        self.analysis_transform = AnalysisTransform(num_filters, depth, num_postproc, use_FiLM=True,
+        self.use_FiLM = FiLM_depth
+        self.analysis_transform = AnalysisTransform(num_filters, depth, num_postproc,
                                                     FiLM_depth=FiLM_depth,
                                                     FiLM_width=FiLM_width, FiLM_activation=FiLM_activation)
-        self.synthesis_transform = SynthesisTransform(num_filters, depth, num_postproc, use_FiLM=True,
+        self.synthesis_transform = SynthesisTransform(num_filters, depth, num_postproc,
                                                       FiLM_depth=FiLM_depth,
                                                       FiLM_width=FiLM_width, FiLM_activation=FiLM_activation)
         self.entropy_bottleneck = tfc.EntropyBottleneck()
