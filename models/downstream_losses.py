@@ -1,5 +1,5 @@
 import tensorflow as tf
-from typing import Callable, Sequence, Any
+from typing import Callable, Sequence, Any, Optional
 
 
 class PerceptualLoss:
@@ -12,15 +12,22 @@ class PerceptualLoss:
                  metric_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor],
                  preprocess_fn: Callable[[tf.Tensor], tf.Tensor],
                  readout_layers: Sequence[str],
-                 normalize_activations: bool) -> None:
+                 normalize_activations: bool,
+                 backbone_layer: Optional[str] = None) -> None:
+        if backbone_layer:
+            self.backbone_model = model.get_layer(backbone_layer)
+        else:
+            self.backbone_model = model
         self.model = model
+
         self.metric_fn = metric_fn
         self.preprocess_fn = preprocess_fn
         self.readout_layers = readout_layers
         self.normalize_activations = normalize_activations
 
-        self.model_readouts = tf.keras.Model(inputs=self.model.input,
-                                             outputs=[self.model.get_layer(L).output for L in self.readout_layers])
+        self.model_readouts = tf.keras.Model(inputs=self.backbone_model.input,
+                                             outputs=[self.backbone_model.get_layer(L).output for L in
+                                                      self.readout_layers])
 
     def loss(self,
              X: tf.Tensor,
@@ -37,8 +44,8 @@ class PerceptualLoss:
         reduced_channels = []
         for i in range(len(self.readout_layers)):
             if self.normalize_activations:
-                scaled_original_readouts, _ = tf.linalg.normalize(original_readouts[i], axis=-1)
-                scaled_reconstruction_readouts, _ = tf.linalg.normalize(reconstruction_readouts[i], axis=-1)
+                scaled_original_readouts = tf.math.l2_normalize(original_readouts[i], axis=-1)
+                scaled_reconstruction_readouts = tf.math.l2_normalize(reconstruction_readouts[i], axis=-1)
                 diff = tf.math.squared_difference(scaled_original_readouts, scaled_reconstruction_readouts)
             else:
                 diff = tf.math.squared_difference(original_readouts[i], reconstruction_readouts[i])

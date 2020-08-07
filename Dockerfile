@@ -4,7 +4,7 @@ RUN pip install tensorflow-compression
 COPY requirements.txt /requirements.txt
 RUN pip install -r requirements.txt
 RUN apt-get update
-RUN apt-get install -y libsm6 libxext6 libxrender-dev rsync vim git
+RUN apt-get install -y libsm6 libxext6 libxrender-dev rsync vim git awscli
 
 COPY . /thesis-compression
 WORKDIR /thesis-compression

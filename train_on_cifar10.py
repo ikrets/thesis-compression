@@ -22,12 +22,14 @@ parser.add_argument('--model', choices=['resnet18', 'vgg16'], required=True)
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--base_lr', type=float, default=0.1)
 parser.add_argument('--base_wd', type=float, default=5e-4)
+parser.add_argument('--drop_lr_multiplier', type=float, default=0.1)
+parser.add_argument('--drop_lr_epochs', type=int, nargs='+', default=(60, 90))
 parser.add_argument('--experiment_dir', type=str, required=True)
 parser.add_argument('--no_slug', action='store_true')
 args = parser.parse_args()
 
 optimizer = SGDW(lr=args.base_lr, weight_decay=args.base_wd, momentum=0.9, name='sgdw')
-# optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(optimizer)
+
 
 class LRandWDScheduler(tfk.callbacks.Callback):
     def __init__(self, multiplier_schedule, base_lr, base_wd):
@@ -47,6 +49,7 @@ class LRandWDScheduler(tfk.callbacks.Callback):
 
         logs['lr'] = K.get_value(self.model.optimizer.lr)
         logs['weight_decay'] = K.get_value(self.model.optimizer.weight_decay)
+
 
 sess = tf.keras.backend.get_session()
 
@@ -73,12 +76,8 @@ model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['ca
 
 
 def schedule(epoch):
-    if epoch < 60:
-        return 1
-    elif epoch < 80:
-        return 0.1
-    else:
-        return 0.01
+    times_dropped = sum(1 for drop_epoch in args.drop_lr_epochs if epoch > drop_epoch)
+    return args.drop_lr_multiplier ** times_dropped
 
 
 lr_and_wd_scheduler = LRandWDScheduler(multiplier_schedule=schedule,
@@ -102,4 +101,4 @@ model.fit(data_train,
           validation_data=data_test,
           validation_steps=math.ceil(test_examples / args.batch_size),
           callbacks=[lr_and_wd_scheduler, tensorboard_callback])
-model.save(Path(args.experiment_dir) / 'final_model.hdf5', include_optimizer=False)
+model.save(experiment_path / 'final_model.hdf5', include_optimizer=False)

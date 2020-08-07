@@ -182,6 +182,7 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
         metric_fn=tf.keras.metrics.categorical_accuracy,
         readout_layers=args.perceptual_loss_readouts,
         normalize_activations=args.perceptual_loss_normalize_activations,
+        backbone_layer=args.perceptual_loss_backbone_prefix
     )
 
     compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
@@ -248,6 +249,7 @@ parser.add_argument('--experiment_dir', type=str, required=True)
 
 parser.add_argument('--perceptual_loss_readouts', type=str, nargs='+')
 parser.add_argument('--perceptual_loss_normalize_activations', action='store_true')
+parser.add_argument('--perceptual_loss_backbone_prefix', type=str)
 
 parser.add_argument('--no_slug', action='store_true')
 parser.add_argument('--fp16', action='store_true')
