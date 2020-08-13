@@ -214,7 +214,13 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
     writer.add_summary(summary.session_start_pb(hparams=hparams))
     writer.flush()
 
-    add_parameters_fn = lambda item: compressors.pipeline_add_constant_parameters(item, args.alpha, args.lmbda)
+    def add_parameters_fn(item):
+        return compressors.pipeline_add_constant_parameters(item,
+                                                            alpha=tf.cond(item['epoch'] >= args.zero_alpha_epochs,
+                                                                    true_fn=lambda: args.alpha,
+                                                                    false_fn=lambda: 0.0),
+                                                            lmbda=args.lmbda)
+
     compressor_with_downstream_comparison.fit(dataset_setup,
                                               add_parameters_fn=add_parameters_fn,
                                               epochs=args.epochs,
@@ -271,6 +277,7 @@ yoto_bpp_adapter.set_defaults(func=run_yoto_bpp_adapter)
 fixed_parameters = subparsers.add_parser('fixed_parameters')
 fixed_parameters.add_argument('--lambda', type=float, required=True, dest='lmbda')
 fixed_parameters.add_argument('--alpha', type=float, required=True)
+fixed_parameters.add_argument('--zero_alpha_epochs', type=int, default=0)
 fixed_parameters.set_defaults(func=run_fixed_parameters)
 
 args = parser.parse_args()

@@ -33,8 +33,9 @@ class CompressorWithDownstreamLoss:
         self.main_optimizer = main_optimizer
         self.aux_optimizer = aux_optimizer
 
-    def _get_outputs_losses_metrics(self, dataset, add_parameters_fn, training):
+    def _get_outputs_losses_metrics(self, dataset, add_parameters_fn, training, epoch_placeholder):
         batch = dataset.make_one_shot_iterator().get_next()
+        batch['epoch'] = epoch_placeholder
         batch = add_parameters_fn(batch)
 
         compressor_outputs = self.compressor.forward(batch, training)
@@ -103,15 +104,18 @@ class CompressorWithDownstreamLoss:
             checkpoint_period, callbacks: Sequence[Callable[[int, tf.summary.FileWriter], None]] = ()) -> None:
         main_lr_placeholder = tf.placeholder(dtype=tf.float32)
         assign_lr = tf.assign(self.main_lr, main_lr_placeholder)
+        epoch_placeholder = tf.placeholder(dtype=tf.int32)
 
         train_outputs_losses_metrics = self._get_outputs_losses_metrics(
             dataset_setup.train_dataset,
             add_parameters_fn=add_parameters_fn,
-            training=True)
+            training=True,
+            epoch_placeholder=epoch_placeholder)
         val_outputs_losses_metrics = self._get_outputs_losses_metrics(
             dataset_setup.val_dataset,
             add_parameters_fn=add_parameters_fn,
-            training=False)
+            training=False,
+            epoch_placeholder=epoch_placeholder)
 
         sess = tf.keras.backend.get_session()
         already_initialized = sess.run({v: tf.is_variable_initialized(v) for v in tf.global_variables()})
@@ -135,7 +139,8 @@ class CompressorWithDownstreamLoss:
             train_logger.log_scalar('main_lr', self.main_schedule(epoch), step=epoch)
 
             for train_step in trange(dataset_setup.train_steps, desc='train batch'):
-                train_results, _ = sess.run([train_outputs_losses_metrics, train_steps])
+                train_results, _ = sess.run([train_outputs_losses_metrics, train_steps],
+                                            {epoch_placeholder: epoch})
 
                 self._accumulate(train_results, training=True)
 
@@ -152,7 +157,7 @@ class CompressorWithDownstreamLoss:
 
             visualize_step = np.random.choice(np.arange(dataset_setup.val_steps))
             for val_step in trange(dataset_setup.val_steps, desc='val batch with random parameters'):
-                val_results = sess.run(val_outputs_losses_metrics)
+                val_results = sess.run(val_outputs_losses_metrics, {epoch_placeholder: epoch})
                 self._accumulate(val_results, training=False)
 
                 if val_step == visualize_step:
