@@ -22,6 +22,7 @@ parser.add_argument('--model', choices=['resnet18', 'vgg16'], required=True)
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--base_lr', type=float, default=0.1)
 parser.add_argument('--base_wd', type=float, default=5e-4)
+parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--drop_lr_multiplier', type=float, default=0.1)
 parser.add_argument('--drop_lr_epochs', type=int, nargs='+', default=(60, 90))
 parser.add_argument('--experiment_dir', type=str, required=True)
@@ -96,7 +97,7 @@ save_experiment_params(experiment_path, args)
 model.save(experiment_path / 'model.hdf5',
            include_optimizer=False)
 model.fit(data_train,
-          epochs=100,
+          epochs=args.epochs,
           steps_per_epoch=math.ceil(train_examples / args.batch_size),
           validation_data=data_test,
           validation_steps=math.ceil(test_examples / args.batch_size),
