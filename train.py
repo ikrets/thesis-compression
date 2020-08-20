@@ -176,14 +176,21 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
         downstream_model.load_weights(args.downstream_model_weights)
     preprocess_fn = lambda X: datasets.cifar10.normalize(X if not args.correct_bgr else X[..., ::-1])
 
-    downstream_loss = models.downstream_losses.PerceptualLoss(
-        model=downstream_model,
-        preprocess_fn=preprocess_fn,
-        metric_fn=tf.keras.metrics.categorical_accuracy,
-        readout_layers=args.perceptual_loss_readouts,
-        normalize_activations=args.perceptual_loss_normalize_activations,
-        backbone_layer=args.perceptual_loss_backbone_prefix
-    )
+    if args.downstream_loss == 'perceptual':
+        downstream_loss = models.downstream_losses.PerceptualLoss(
+            model=downstream_model,
+            preprocess_fn=preprocess_fn,
+            metric_fn=tf.keras.metrics.categorical_accuracy,
+            readout_layers=args.perceptual_loss_readouts,
+            normalize_activations=args.perceptual_loss_normalize_activations,
+            backbone_layer=args.perceptual_loss_backbone_prefix
+        )
+    elif args.downstream_loss == 'forward_kld':
+        downstream_loss = models.downstream_losses.PredictionDivergence(model=downstream_model,
+                                                                        preprocess_fn=preprocess_fn,
+                                                                        metric_fn=tf.keras.metrics.categorical_accuracy)
+    else:
+        assert False
 
     compressor_with_downstream_comparison = CompressorWithDownstreamLoss(compressor,
                                                                          downstream_loss)
@@ -205,11 +212,15 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
         'film_depth': 0,
         'film_width': 0,
         'batch_size': args.batchsize,
-        'perceptual_loss_readouts': args.perceptual_loss_readouts,
-        'perceptual_loss_normalize_activations': args.perceptual_loss_normalize_activations,
         'alpha': args.alpha,
-        'lambda': args.lmbda
+        'lambda': args.lmbda,
+        'downstream_loss': args.downstream_loss
     }
+    if args.downstream_loss == 'perceptual':
+        hparams.update({
+            'perceptual_loss_readouts': args.perceptual_loss_readouts,
+            'perceptual_loss_normalize_activations': args.perceptual_loss_normalize_activations})
+
     writer = tf.summary.FileWriter(experiment_dir)
     writer.add_summary(summary.session_start_pb(hparams=hparams))
     writer.flush()
@@ -217,8 +228,8 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
     def add_parameters_fn(item):
         return compressors.pipeline_add_constant_parameters(item,
                                                             alpha=tf.cond(item['epoch'] >= args.zero_alpha_epochs,
-                                                                    true_fn=lambda: args.alpha,
-                                                                    false_fn=lambda: 0.0),
+                                                                          true_fn=lambda: args.alpha,
+                                                                          false_fn=lambda: 0.0),
                                                             lmbda=args.lmbda)
 
     compressor_with_downstream_comparison.fit(dataset_setup,
@@ -253,6 +264,7 @@ parser.add_argument('--downstream_model', type=str, required=True)
 parser.add_argument('--downstream_model_weights', type=str)
 parser.add_argument('--experiment_dir', type=str, required=True)
 
+parser.add_argument('--downstream_loss', choices=['perceptual', 'forward_kld'], default='perceptual')
 parser.add_argument('--perceptual_loss_readouts', type=str, nargs='+')
 parser.add_argument('--perceptual_loss_normalize_activations', action='store_true')
 parser.add_argument('--perceptual_loss_backbone_prefix', type=str)

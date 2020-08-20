@@ -1,5 +1,8 @@
 import tensorflow as tf
+import tensorflow_probability as tfp
 from typing import Callable, Sequence, Any, Optional
+
+tfd = tfp.distributions
 
 
 class PerceptualLoss:
@@ -57,4 +60,27 @@ class PerceptualLoss:
     def metric(self,
                X_reconstruction: tf.Tensor,
                label: tf.Tensor) -> tf.Tensor:
+        return self.metric_fn(label, self.model(self.preprocess_fn(X_reconstruction)))
+
+
+class PredictionDivergence:
+    def __init__(self,
+                 model: tf.keras.Model,
+                 metric_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor],
+                 preprocess_fn: Callable[[tf.Tensor], tf.Tensor],
+                 ) -> None:
+        self.model = model
+        self.metric_fn = metric_fn
+        self.preprocess_fn = preprocess_fn
+
+    def loss(self, X: tf.Tensor, X_reconstruction: tf.Tensor) -> tf.Tensor:
+        original_preds = self.model(self.preprocess_fn(X))
+        reconstruction_preds = self.model(self.preprocess_fn(X_reconstruction))
+
+        original_dist = tfd.Categorical(probs=original_preds)
+        reconstruction_dist = tfd.Categorical(probs=reconstruction_preds)
+
+        return tfd.kl_divergence(original_dist, reconstruction_dist)
+
+    def metric(self, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
         return self.metric_fn(label, self.model(self.preprocess_fn(X_reconstruction)))
