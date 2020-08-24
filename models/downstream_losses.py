@@ -34,7 +34,8 @@ class PerceptualLoss:
 
     def loss(self,
              X: tf.Tensor,
-             X_reconstruction: tf.Tensor) -> tf.Tensor:
+             X_reconstruction: tf.Tensor,
+             label: tf.Tensor) -> tf.Tensor:
 
         original_readouts = self.model_readouts(self.preprocess_fn(X))
         reconstruction_readouts = self.model_readouts(self.preprocess_fn(X_reconstruction))
@@ -63,7 +64,7 @@ class PerceptualLoss:
         return self.metric_fn(label, self.model(self.preprocess_fn(X_reconstruction)))
 
 
-class PredictionDivergence:
+class PredictionCrossEntropy:
     def __init__(self,
                  model: tf.keras.Model,
                  metric_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor],
@@ -73,14 +74,29 @@ class PredictionDivergence:
         self.metric_fn = metric_fn
         self.preprocess_fn = preprocess_fn
 
-    def loss(self, X: tf.Tensor, X_reconstruction: tf.Tensor) -> tf.Tensor:
+    def loss(self, X: tf.Tensor, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
         original_preds = self.model(self.preprocess_fn(X))
         reconstruction_preds = self.model(self.preprocess_fn(X_reconstruction))
 
-        original_dist = tfd.Categorical(probs=original_preds)
-        reconstruction_dist = tfd.Categorical(probs=reconstruction_preds)
-
-        return tfd.kl_divergence(original_dist, reconstruction_dist)
+        return tf.keras.losses.categorical_crossentropy(original_preds, reconstruction_preds)
 
     def metric(self, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
         return self.metric_fn(label, self.model(self.preprocess_fn(X_reconstruction)))
+
+class TaskCrossEntropy:
+    def __init__(self,
+                 model: tf.keras.Model,
+                 metric_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor],
+                 preprocess_fn: Callable[[tf.Tensor], tf.Tensor],
+                 ) -> None:
+        self.model = model
+        self.metric_fn = metric_fn
+        self.preprocess_fn = preprocess_fn
+
+    def loss(self, X: tf.Tensor, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
+        reconstruction_preds = self.model(self.preprocess_fn(X_reconstruction))
+        return tf.keras.losses.categorical_crossentropy(label, reconstruction_preds)
+
+    def metric(self, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
+        return self.metric_fn(label, self.model(self.preprocess_fn(X_reconstruction)))
+

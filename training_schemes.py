@@ -45,7 +45,7 @@ class CompressorWithDownstreamLoss:
         bpp = bits_per_pixel(compressor_outputs['Y_likelihoods'], tf.shape(batch['X']))
         psnr = tf.image.psnr(batch['X'], clipped_X_tilde, max_val=1.)
 
-        downstream_loss = self.downstream_loss.loss(X=batch['X'], X_reconstruction=clipped_X_tilde)
+        downstream_loss = self.downstream_loss.loss(X=batch['X'], X_reconstruction=clipped_X_tilde, label=batch['label'])
         compressed_metric = self.downstream_loss.metric(label=batch['label'], X_reconstruction=clipped_X_tilde)
 
         total = batch['lambda'] * mse * (255 ** 2) + batch['alpha'] * downstream_loss * (

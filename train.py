@@ -185,10 +185,14 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
             normalize_activations=args.perceptual_loss_normalize_activations,
             backbone_layer=args.perceptual_loss_backbone_prefix
         )
-    elif args.downstream_loss == 'forward_kld':
-        downstream_loss = models.downstream_losses.PredictionDivergence(model=downstream_model,
-                                                                        preprocess_fn=preprocess_fn,
-                                                                        metric_fn=tf.keras.metrics.categorical_accuracy)
+    elif args.downstream_loss == 'prediction_crossentropy':
+        downstream_loss = models.downstream_losses.PredictionCrossEntropy(model=downstream_model,
+                                                                          preprocess_fn=preprocess_fn,
+                                                                          metric_fn=tf.keras.metrics.categorical_accuracy)
+    elif args.downstream_loss == 'task_crossentropy':
+        downstream_loss = models.downstream_losses.TaskCrossEntropy(model=downstream_model,
+                                                                    preprocess_fn=preprocess_fn,
+                                                                    metric_fn=tf.keras.metrics.categorical_accuracy)
     else:
         assert False
 
@@ -264,7 +268,8 @@ parser.add_argument('--downstream_model', type=str, required=True)
 parser.add_argument('--downstream_model_weights', type=str)
 parser.add_argument('--experiment_dir', type=str, required=True)
 
-parser.add_argument('--downstream_loss', choices=['perceptual', 'forward_kld'], default='perceptual')
+parser.add_argument('--downstream_loss', choices=['perceptual', 'prediction_crossentropy', 'task_crossentropy'],
+                    default='perceptual')
 parser.add_argument('--perceptual_loss_readouts', type=str, nargs='+')
 parser.add_argument('--perceptual_loss_normalize_activations', action='store_true')
 parser.add_argument('--perceptual_loss_backbone_prefix', type=str)
