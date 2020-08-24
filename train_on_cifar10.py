@@ -96,10 +96,10 @@ save_experiment_params(experiment_path, args)
 
 model.save(experiment_path / 'model.hdf5',
            include_optimizer=False)
-model.fit(data_train,
+model.fit(data_train.prefetch(1),
           epochs=args.epochs,
           steps_per_epoch=math.ceil(train_examples / args.batch_size),
-          validation_data=data_test,
+          validation_data=data_test.prefetch(1),
           validation_steps=math.ceil(test_examples / args.batch_size),
           callbacks=[lr_and_wd_scheduler, tensorboard_callback])
 model.save(experiment_path / 'final_model.hdf5', include_optimizer=False)

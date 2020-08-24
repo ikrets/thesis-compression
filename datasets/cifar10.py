@@ -55,7 +55,7 @@ def pipeline(dataset, batch_size, flip, crop, classifier_normalize=True,
     dataset = dataset.map(lambda item: {'X': process_image(item['X']),
                                         'name': item['name'],
                                         'label': filename_to_one_hot_label(item['name'])},
-                          AUTO)
+                          AUTO).cache()
 
     def process_X(X):
         if classifier_normalize:
