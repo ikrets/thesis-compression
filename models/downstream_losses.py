@@ -78,10 +78,14 @@ class PredictionCrossEntropy:
         original_preds = self.model(self.preprocess_fn(X))
         reconstruction_preds = self.model(self.preprocess_fn(X_reconstruction))
 
-        return tf.keras.losses.categorical_crossentropy(original_preds, reconstruction_preds)
+        original_dist = tfd.Categorical(probs=original_preds)
+        reconstruction_dist = tfd.Categorical(probs=reconstruction_preds)
+
+        return tfd.kl_divergence(original_dist, reconstruction_dist)
 
     def metric(self, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
         return self.metric_fn(label, self.model(self.preprocess_fn(X_reconstruction)))
+
 
 class TaskCrossEntropy:
     def __init__(self,
@@ -99,4 +103,3 @@ class TaskCrossEntropy:
 
     def metric(self, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
         return self.metric_fn(label, self.model(self.preprocess_fn(X_reconstruction)))
-
