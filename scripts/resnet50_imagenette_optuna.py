@@ -3,7 +3,7 @@ import numpy as np
 import argparse
 import math
 from pathlib import Path
-from weight_decay_optimizers import SGDW
+from weight_decay_optimizers import AdamW
 import tensorflow.keras.backend as K
 import coolname
 import optuna
@@ -23,8 +23,9 @@ parser.add_argument('--bn_momentum', type=float, default=0.9)
 parser.add_argument('--base_lr_range', type=float, nargs=2)
 parser.add_argument('--base_wd_range', type=float, nargs=2)
 parser.add_argument('--epochs', type=int, default=100)
-parser.add_argument('--drop_lr_multiplier_choices', type=float, nargs='+', required=True)
-parser.add_argument('--drop_lr_epochs', type=int, nargs='+', default=(60, 90))
+parser.add_argument('--min_lr', type=float, required=True)
+parser.add_argument('--max_lr', type=float, required=True)
+parser.add_argument('--final_anneal_epochs', type=int, required=True)
 parser.add_argument('--fp16', action='store_true')
 parser.add_argument('--study_name', type=str, required=True)
 parser.add_argument('--study_storage_dir', type=str, required=True)
@@ -37,9 +38,9 @@ def objective(trial):
     base_wd = trial.suggest_loguniform('wd', *args.base_wd_range)
     drop_lr_multiplier = trial.suggest_categorical('drop_lr_multiplier', args.drop_lr_multiplier_choices)
 
-    optimizer = SGDW(lr=base_lr,
-                     weight_decay=base_wd,
-                     momentum=0.9, name='sgdw')
+    optimizer = AdamW(lr=base_lr,
+                      weight_decay=base_wd,
+                      momentum=0.9, name='sgdw')
     if args.fp16:
         optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(optimizer)
 
@@ -84,13 +85,13 @@ def objective(trial):
                         validation_steps=math.ceil(test_examples / args.batch_size),
                         callbacks=[lr_and_wd_scheduler, tensorboard_callback, pruning_callback])
     model.save(experiment_path / 'final_model.hdf5', include_optimizer=False)
-    return history.history['val_categorical_accuracy'][-1]
+    return np.mean(history.history['val_categorical_accuracy'][-5:])
 
 
 Path(args.study_storage_dir).mkdir(parents=True, exist_ok=True)
 save_experiment_params(args.study_storage_dir, args)
 study = optuna.create_study(study_name=args.study_name,
-                            direction='minimize',
+                            direction='maximize',
                             storage='sqlite:///{}/study.db'.format(args.study_storage_dir),
                             load_if_exists=True)
 study.optimize(objective, n_trials=20)

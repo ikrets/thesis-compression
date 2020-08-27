@@ -8,6 +8,17 @@ def make_stepwise(base_lr, boundaries, multiplier):
 
     return sched
 
+def make_1cycle(min_lr, max_lr, final_anneal, total_epochs):
+    def sched(epoch):
+        half_cycle = (total_epochs - final_anneal) // 2
+        if epoch <= half_cycle:
+            return min_lr + epoch / half_cycle * (max_lr - min_lr)
+        if epoch > half_cycle and epoch + final_anneal < total_epochs:
+            return max_lr + (epoch - half_cycle) / half_cycle * (min_lr - max_lr)
+        return (total_epochs - epoch) / final_anneal * min_lr
+
+    return sched
+
 class LRandWDScheduler(tf.keras.callbacks.Callback):
     def __init__(self, multiplier_schedule, base_lr, base_wd, fp16):
         super(LRandWDScheduler, self).__init__()

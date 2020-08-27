@@ -9,7 +9,7 @@ import coolname
 
 from datasets.imagenette import pipeline, read_images
 from experiment import save_experiment_params
-from models.utils import LRandWDScheduler
+from models.utils import make_1cycle, LRandWDScheduler
 
 tfk = tf.keras
 
@@ -20,16 +20,20 @@ parser.add_argument('--image_size', type=int, default=160)
 parser.add_argument('--min_image_size', type=int, nargs=2, default=(300, 300))
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--bn_momentum', type=float, default=0.9)
-parser.add_argument('--base_lr', type=float, default=0.1)
+parser.add_argument('--base_lr', type=float, required=True)
 parser.add_argument('--base_wd', type=float, default=5e-4)
 parser.add_argument('--epochs', type=int, default=100)
-parser.add_argument('--drop_lr_multiplier', type=float, default=0.1)
-parser.add_argument('--drop_lr_epochs', type=int, nargs='+', default=(60, 90))
+parser.add_argument('--min_mult', type=float, default=0.1)
+parser.add_argument('--max_mult', type=float, default=1)
+parser.add_argument('--final_anneal_epochs', type=int, required=True)
 parser.add_argument('--experiment_dir', type=str, required=True)
+parser.add_argument('--fp16', action='store_true')
 parser.add_argument('--no_slug', action='store_true')
 args = parser.parse_args()
 
 optimizer = SGDW(lr=args.base_lr, weight_decay=args.base_wd, momentum=0.9, name='sgdw')
+if args.fp16:
+    optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(optimizer)
 
 sess = tf.keras.backend.get_session()
 
@@ -46,8 +50,7 @@ data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size
                      min_height=args.min_image_size[0],
                      min_width=args.min_image_size[1])
 
-input = tfk.layers.Input(shape=[args.image_size, args.image_size, 3])
-model = tf.keras.applications.ResNet50V2(weights=None, pooling='avg', classes=10,
+model = tf.keras.applications.ResNet50V2(weights=None, classes=10, pooling='avg',
                                          input_shape=[args.image_size, args.image_size, 3])
 for layer in model.layers:
     if isinstance(layer, tf.keras.layers.BatchNormalization):
@@ -55,24 +58,20 @@ for layer in model.layers:
 model = tf.keras.models.model_from_json(model.to_json())
 model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
 
-
-def schedule(epoch):
-    times_dropped = sum(1 for drop_epoch in args.drop_lr_epochs if epoch > drop_epoch)
-    return args.drop_lr_multiplier ** times_dropped
-
-
-lr_and_wd_scheduler = LRandWDScheduler(multiplier_schedule=schedule,
+schedule_1cycle = make_1cycle(args.min_mult, args.max_mult, args.final_anneal_epochs, args.epochs)
+lr_and_wd_scheduler = LRandWDScheduler(multiplier_schedule=schedule_1cycle,
                                        base_lr=args.base_lr,
-                                       base_wd=args.base_wd)
+                                       base_wd=args.base_wd,
+                                       fp16=args.fp16)
 
-tensorboard_callback = tfk.callbacks.TensorBoard(profile_batch=0,
-                                                 log_dir=args.experiment_dir)
 experiment_path = Path(args.experiment_dir)
 if not args.no_slug:
     experiment_path = experiment_path / coolname.generate_slug()
 
 experiment_path.mkdir(parents=True, exist_ok=True)
 save_experiment_params(experiment_path, args)
+tensorboard_callback = tfk.callbacks.TensorBoard(profile_batch=0,
+                                                 log_dir=experiment_path)
 
 model.save(experiment_path / 'model.hdf5',
            include_optimizer=False)

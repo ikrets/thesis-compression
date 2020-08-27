@@ -14,12 +14,13 @@ def path_to_files_labels(path):
     return files, labels
 
 
-def preprocess_img(image_bytes, size, is_training):
+def preprocess_img(image_bytes):
     image = tf.image.decode_jpeg(image_bytes)
     image = tf.cond(tf.equal(tf.shape(image)[-1], 1),
                     true_fn=lambda: tf.image.grayscale_to_rgb(image),
                     false_fn=lambda: image)
     image = tf.cast(image, tf.float32) / 255
+    image = (image - [0.485, 0.456, 0.406]) / [0.229, 0.224, 0.225]
 
     return image
 
@@ -34,13 +35,14 @@ def read_images(dir: Union[str, Path]) -> Tuple[tf.data.Dataset, int]:
 
 
 def augment(image, Y, size):
-    random_scale = tf.random.uniform([1], minval=1, maxval=2)[0]
+    random_scale = tf.random.uniform([1], minval=1, maxval=1.25)[0]
     image = tf.compat.v2.image.resize_with_pad(image,
                                                tf.cast(size * random_scale, tf.int32),
                                                tf.cast(size * random_scale, tf.int32),
                                                method='bicubic'
                                                )
     image = tf.image.random_crop(image, [size, size, 3])
+    image = tf.compat.v2.image.resize_with_pad(image, size, size, method='bicubic')
     image = tf.image.random_flip_left_right(image)
     return image, Y
 
@@ -52,7 +54,7 @@ def pipeline(dataset, batch_size, size, is_training,
         dataset = dataset.shuffle(10000)
 
     def preprocess_fn(X, Y):
-        return preprocess_img(X, size=size, is_training=is_training), tf.one_hot(Y, depth=10)
+        return preprocess_img(X), tf.one_hot(Y, depth=10)
 
     dataset = dataset.map(preprocess_fn, AUTO)
 

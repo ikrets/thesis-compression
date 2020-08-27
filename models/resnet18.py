@@ -22,7 +22,7 @@ def block(inp, filters, stride):
 
     return out
 
-def resnet18(inp):
+def resnet18(inp, pooling='avg'):
     def repeat_block(inp, filters, stride, num_blocks):
         out = inp
         for i in range(num_blocks):
@@ -37,7 +37,11 @@ def resnet18(inp):
     out = repeat_block(out, 256, num_blocks=2, stride=2)
     out = repeat_block(out, 512, num_blocks=2, stride=2)
 
-    out = tfkl.AvgPool2D(4)(out)
+    if pooling == 'avg':
+        out = tfkl.AvgPool2D(4)(out)
+    else:
+        out = tfkl.GlobalAveragePooling2D()(out)
+
     out = tfkl.Flatten()(out)
     out = tfkl.Dense(10, activation='softmax')(out)
 
