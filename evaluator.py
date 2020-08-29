@@ -17,6 +17,7 @@ parser.add_argument('--downstream_O_model', type=str, required=True)
 parser.add_argument('--downstream_O_model_weights', type=str)
 parser.add_argument('--downstream_O_model_correct_bgr', action='store_true')
 parser.add_argument('--compressed_dataset', type=str, required=True)
+parser.add_argument('--compressed_dataset_type', choices=['files', 'tfrecords'], default='tfrecords')
 parser.add_argument('--downstream_C_model', type=str, required=True)
 parser.add_argument('--output_dir', type=str, required=True)
 
@@ -43,7 +44,11 @@ downstream_O_model.compile('sgd', loss='categorical_crossentropy', metrics=['cat
 downstream_C_model = tf.keras.models.load_model(args.downstream_C_model, compile=False)
 downstream_C_model.compile('sgd', loss='categorical_crossentropy', metrics=['categorical_accuracy'])
 
-_, C_data = datasets.cifar10.read_compressed_tfrecords([args.compressed_dataset])
+if args.compressed_dataset_type == 'tfrecords':
+    _, C_data = datasets.cifar10.read_compressed_tfrecords([args.compressed_dataset])
+elif args.compressed_dataset_type == 'files':
+    C_data, _ = datasets.cifar10.read_images(Path(args.dataset) / 'test')
+
 bpp = sess.run(C_data.reduce(np.float32(0.), lambda acc, item: acc + item['range_coded_bpp']) / O_examples)
 O2C_data = datasets.cifar10.pipeline(C_data,
                                      batch_size=args.batch_size,
