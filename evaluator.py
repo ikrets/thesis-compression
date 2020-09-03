@@ -46,10 +46,11 @@ downstream_C_model.compile('sgd', loss='categorical_crossentropy', metrics=['cat
 
 if args.compressed_dataset_type == 'tfrecords':
     _, C_data = datasets.cifar10.read_compressed_tfrecords([args.compressed_dataset])
+    bpp = sess.run(C_data.reduce(np.float32(0.), lambda acc, item: acc + item['range_coded_bpp']) / O_examples)
 elif args.compressed_dataset_type == 'files':
-    C_data, _ = datasets.cifar10.read_images(Path(args.dataset) / 'test')
+    C_data, _ = datasets.cifar10.read_images(Path(args.compressed_dataset) / 'test')
+    bpp = sess.run(datasets.cifar10.count_bpg_bpps(Path(args.compressed_dataset) / 'test'))
 
-bpp = sess.run(C_data.reduce(np.float32(0.), lambda acc, item: acc + item['range_coded_bpp']) / O_examples)
 O2C_data = datasets.cifar10.pipeline(C_data,
                                      batch_size=args.batch_size,
                                      flip=False,
@@ -69,10 +70,10 @@ C2O_accuracy = downstream_C_model.evaluate(C2O_data)[1]
 O2C_accuracy = downstream_O_model.evaluate(O2C_data)[1]
 
 results = [{'dataset': args.compressed_dataset,
-                'bpp': bpp,
-                'c2o_accuracy': C2O_accuracy,
-                'o2c_accuracy': O2C_accuracy,
-                'c2c_accuracy': C2C_accuracy}]
+            'bpp': bpp,
+            'c2o_accuracy': C2O_accuracy,
+            'o2c_accuracy': O2C_accuracy,
+            'c2c_accuracy': C2C_accuracy}]
 
 results_df = pd.DataFrame(results)
 Path(args.output_dir).mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 from pathlib import Path
 from typing import Optional, Union, Tuple, Sequence
 
@@ -36,6 +37,13 @@ def read_images(dir: Union[str, Path]) -> Tuple[tf.data.Dataset, int]:
                                          'name': fname})
 
     return dataset, len(files)
+
+
+def count_bpg_bpps(dir: Union[str, Path]) -> float:
+    file_lengths = tf.data.Dataset.list_files(f'{dir}/*/*/*.bpg').map(tf.io.read_file).map(tf.strings.length)
+    file_count = file_lengths.reduce(np.float64(0.), lambda acc, _: acc + 1.)
+    return file_lengths.reduce(np.float64(0.),
+                               lambda acc, item: acc + tf.cast(item, tf.float64) * np.float64(8 / 32 / 32)) / file_count
 
 
 def read_compressed_tfrecords(files: Sequence[Union[str, Path]]) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
