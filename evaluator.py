@@ -9,6 +9,8 @@ from tqdm import tqdm
 import datasets.cifar10
 from experiment import save_experiment_params
 
+AUTO = tf.data.experimental.AUTOTUNE
+
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--batch_size', type=int, default=128)
@@ -50,6 +52,8 @@ if args.compressed_dataset_type == 'tfrecords':
 elif args.compressed_dataset_type == 'files':
     C_data, _ = datasets.cifar10.read_images(Path(args.compressed_dataset) / 'test')
     bpp = sess.run(datasets.cifar10.count_bpg_bpps(Path(args.compressed_dataset) / 'test'))
+mse = C_data.map(lambda item: datasets.get_mse(item, args.uncompressed_dataset), AUTO)
+mse = sess.run(mse.reduce(np.float32(0.), lambda acc, v: acc + v / O_examples))
 
 O2C_data = datasets.cifar10.pipeline(C_data,
                                      batch_size=args.batch_size,
@@ -71,6 +75,7 @@ O2C_accuracy = downstream_O_model.evaluate(O2C_data)[1]
 
 results = [{'dataset': args.compressed_dataset,
             'bpp': bpp,
+            'mse': mse,
             'c2o_accuracy': C2O_accuracy,
             'o2c_accuracy': O2C_accuracy,
             'c2c_accuracy': C2C_accuracy}]

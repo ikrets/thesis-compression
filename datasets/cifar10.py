@@ -33,8 +33,13 @@ def process_image(img_string: tf.Tensor) -> tf.Tensor:
 def read_images(dir: Union[str, Path]) -> Tuple[tf.data.Dataset, int]:
     files = tf.io.gfile.glob(f'{dir}/*/*/*.png')
     dataset = tf.data.Dataset.from_tensor_slices(files)
+
+    def make_relative(fname):
+        parts = tf.strings.split([fname], '/')
+        return tf.strings.reduce_join(parts.values[-4:], separator='/')
+
     dataset = dataset.map(lambda fname: {'X': tf.io.read_file(fname),
-                                         'name': fname})
+                                         'name': make_relative(fname)})
 
     return dataset, len(files)
 
