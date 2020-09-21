@@ -23,7 +23,7 @@ o2o_values = {architecture: float(value) for architecture, value in args.o2o_acc
 combined_df = pd.read_csv(args.combined_csv)
 # do not count the header for bpg bitrates
 combined_df.loc[combined_df.compressor == 'bpg', ['bpp_1', 'bpp_2']] -= 13 * 8 / 32 / 32
-combined_df.sort_values(['bpp_1', 'bpp_2'])
+combined_df.sort_values(['bpp_1', 'bpp_2', 'architecture_O', 'architecture_C'])
 
 unspecified_o2o_values = set(combined_df.architecture_O) | set(combined_df.architecture_C)
 unspecified_o2o_values.difference_update(o2o_values.keys())
@@ -31,8 +31,9 @@ if unspecified_o2o_values:
     print('Please specify O2O accuracy for the following architectures: {}'.format(', '.join(unspecified_o2o_values)))
     exit(1)
 
-# 1. Each compressor separately
 samearc_df = combined_df[combined_df.architecture_O == combined_df.architecture_C]
+
+# 1. Each compressor separately
 samearc_grouped = samearc_df.groupby(['architecture_O', 'compressor'])
 for (architecture, compressor), df in samearc_grouped:
     if compressor != 'bpg':
@@ -61,32 +62,59 @@ for (architecture, compressor), df in samearc_grouped:
     plt.close()
 
 # 2. All compressors combined, each evaluation type separately
+samearc_grouped = samearc_df.groupby('architecture_O')
+for accuracy_type in ['o2c_accuracy', 'c2o_accuracy', 'c2c_accuracy']:
+    _, axes = plt.subplots(1, 2, figsize=(10, 3.5))
+    for i, (architecture, df) in enumerate(samearc_grouped):
+        sns.lineplot(x=df.bpp_1, y=df[accuracy_type] / o2o_values[architecture],
+                     hue=df.compressor, ax=axes[i])
+        axes[i].set_title(architecture)
+        axes[i].set_ylabel('% of o2o accuracy')
+        sec_ax = axes[i].secondary_yaxis('right',
+                                         functions=(lambda x, architecture=architecture: x * o2o_values[architecture],
+                                                    lambda y, architecture=architecture: y / o2o_values[architecture]))
+        sec_ax.set_ylabel('{} value'.format(accuracy_type))
+        axes[i].set_xbound(0.5, 2.5)
+        axes[i].set_ybound(0.8, 1)
 
-# cross-architecture plots
+    plt.tight_layout()
+    target_file = output_dir / 'compare_compressors' / '{}.pdf'.format(accuracy_type)
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(target_file)
+    plt.close()
+
+# cross-architecture o2c plots
 crossarc_df = combined_df[combined_df.architecture_O != combined_df.architecture_C]
+crossarc_grouped = crossarc_df.groupby('architecture_O')
+best_performing = {
+    'vgg16': 'block3_conv3',
+    'resnet18': 'act_11_norm'
+}
+_, axes = plt.subplots(1, 2, figsize=(10, 3.5))
 
-# sns.set()
-# for m in ['o2c_accuracy', 'c2o_accuracy', 'c2c_accuracy']:
-#     plt.axhline(y=args.o2o_accuracy, label='o2o_accuracy', color='turquoise', linestyle='--')
-#     sns.lineplot(data=combined_data, x='bpp', y=m, hue='compressor_type', marker='.')
-#     plt.ylim(0.8, 1.02 * args.o2o_accuracy)
-#     plt.title(m)
-#     plt.savefig(Path(args.output_dir) / 'by_loss_{}.pdf'.format(m))
-#     plt.close()
-#
-# melted = pd.melt(combined_data, id_vars=['compressor_type', 'compressor_param', 'dataset', 'bpp'],
-#                  value_vars=['o2c_accuracy', 'c2o_accuracy', 'c2c_accuracy'], var_name='accuracy_type',
-#                  value_name='accuracy_value')
-#
-# for loss in melted.compressor_type.unique():
-#     plt.axhline(y=args.o2o_accuracy, label='o2o_accuracy', color='turquoise', linestyle='--')
-#     sns.lineplot(data=melted[melted['compressor_type'] == loss], x='bpp', y='accuracy_value', hue='accuracy_type',
-#                  marker='.')
-#     if loss != 'bpg':
-#         plt.ylim(0.8, 1.02 * args.o2o_accuracy)
-#     else:
-#         plt.ylim(0.6, 1.02 * args.o2o_accuracy)
-#
-#     plt.title(loss)
-#     plt.savefig(Path(args.output_dir) / 'by_accuracy_type_{}.pdf'.format(loss))
-#     plt.close()
+for i, (architecture, df) in enumerate(crossarc_grouped):
+    bpg_df = combined_df[(combined_df.compressor == 'bpg') & (combined_df.architecture_O == architecture)]
+    best_performing_df = combined_df[(combined_df.compressor == best_performing[architecture])
+                                     & (combined_df.architecture_O == architecture) & (
+                                             combined_df.architecture_C == architecture)].copy()
+    best_performing_df['compressor'] = '{} (best performing)'.format(best_performing[architecture])
+    df = pd.concat([df, bpg_df, best_performing_df])
+    df.loc[df.compressor == 'bpg', 'compressor'] = 'bpg (baseline)'
+
+    sns.lineplot(x=df.bpp_2, y=df['o2c_accuracy'] / o2o_values[architecture],
+                 hue=df.compressor, ax=axes[i])
+    sec_ax = axes[i].secondary_yaxis('right',
+                                     functions=(lambda x, a=architecture: x * o2o_values[a],
+                                                lambda y, a=architecture: y / o2o_values[a]))
+    sec_ax.set_ylabel('value')
+    axes[i].set_ylabel('% of o2o accuracy')
+    axes[i].set_title('{} O model evaluated on {} C data'.format(
+        architecture, 'vgg16' if architecture == 'resnet18' else 'resnet18'))
+    axes[i].set_xbound(0.5, 2.5)
+    axes[i].set_ybound(0.75, 1)
+
+target_file = output_dir / 'cross_architecture' / 'o2c.pdf'
+target_file.parent.mkdir(parents=True, exist_ok=True)
+plt.tight_layout()
+plt.savefig(target_file)
+plt.close()
