@@ -8,16 +8,19 @@ from tqdm import trange
 
 from datasets import cifar10
 from experiment import save_experiment_params
+import models
 
 K = tf.keras.backend
 AUTO = tf.data.experimental.AUTOTUNE
+
 
 # taken from https://github.com/eclique/keras-gradcam
 def grad_cam_batch(input_model, batch, layer_name):
     """GradCAM method for visualizing input saliency.
     Same as grad_cam but processes multiple images in one run."""
-    loss = tf.gather_nd(input_model.output, np.dstack([range(batch['X'].shape[0]), batch['label']])[0])
     layer_output = input_model.get_layer(layer_name).output
+    loss = tf.gather_nd(input_model.output, np.dstack([range(batch['X'].shape[0]), batch['label']])[0])
+
     grads = K.gradients(loss, layer_output)[0]
     gradient_fn = K.function([input_model.input, K.learning_phase()], [layer_output, grads])
 
@@ -78,9 +81,15 @@ if __name__ == '__main__':
     parser.add_argument('--model_correct_bgr', action='store_true')
     parser.add_argument('--model_backbone_prefix', type=str)
     parser.add_argument('--gradcam_layer_name', type=str, required=True)
-    parser.add_argument('--batch_size', default=1024)
+    parser.add_argument('--batch_size', type=int, default=1024)
     parser.add_argument('--output_dir', type=str, required=True)
     args = parser.parse_args()
+
+    model = tf.keras.models.load_model(args.model)
+    if args.model_weights:
+        model.load_weights(args.model_weights)
+    if args.model_backbone_prefix:
+        model = models.surgery_flatten(model, args.model_backbone_prefix)
 
     data_train, train_examples = cifar10.read_images(Path(args.dataset) / 'train')
     data_test, test_examples = cifar10.read_images(Path(args.dataset) / 'test')
@@ -100,19 +109,13 @@ if __name__ == '__main__':
     data_train = data_train.map(preprocess_cifar10, AUTO).batch(args.batch_size).prefetch(AUTO)
     data_test = data_test.map(preprocess_cifar10, AUTO).batch(args.batch_size).prefetch(AUTO)
 
-    model = tf.keras.models.load_model(args.model)
-    if args.model_weights:
-        model.load_weights(args.model_weights)
-
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     save_experiment_params(output_dir, args)
 
-    layer_name = args.gradcam_layer_name if not args.model_backbone_prefix else '{}/{}'.format(
-        args.model_backbone_prefix, args.gradcam_layer_name)
     save_grad_cam_outputs(data_train, np.ceil(train_examples / args.batch_size).astype(int), model,
-                          layer_name,
+                          args.gradcam_layer_name,
                           output_dir)
     save_grad_cam_outputs(data_test, np.ceil(test_examples / args.batch_size).astype(int), model,
-                          layer_name,
+                          args.gradcam_layer_name,
                           output_dir)
