@@ -67,6 +67,7 @@ if args.downstream_O_model:
                                          crop=False,
                                          classifier_normalize=True,
                                          repeat=False)
+    C2O_data = C2O_data.map(datasets.dict_to_tuple, AUTO)
 
     downstream_O_model = tf.keras.models.load_model(args.downstream_O_model, compile=False)
     if args.downstream_O_model_weights:
@@ -89,6 +90,7 @@ if args.downstream_O_model:
                                          classifier_normalize=True,
                                          correct_bgr=args.downstream_O_model_correct_bgr,
                                          repeat=False)
+    O2C_data = O2C_data.map(datasets.dict_to_tuple, AUTO)
     results['c2o_accuracy'] = downstream_C_model.evaluate(C2O_data)[1]
     results['o2c_accuracy'] = downstream_O_model.evaluate(O2C_data)[1]
 
@@ -99,6 +101,7 @@ if not args.skip_C2C:
                                          crop=False,
                                          classifier_normalize=True,
                                          repeat=False)
+    C2C_data = C2C_data.map(datasets.dict_to_tuple, AUTO)
     results['c2c_accuracy'] = downstream_C_model.evaluate(C2C_data)[1]
 
 results_df = pd.DataFrame([results])

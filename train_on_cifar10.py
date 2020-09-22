@@ -10,10 +10,12 @@ import coolname
 from models.resnet18 import resnet18
 from models.vgg16 import vgg16
 
+import datasets
 from datasets.cifar10 import pipeline, read_images, read_compressed_tfrecords
 from experiment import save_experiment_params
 
 tfk = tf.keras
+AUTO = tf.data.experimental.AUTOTUNE
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, required=True)
@@ -65,7 +67,9 @@ if args.dataset_type == 'compressed_tfrecords':
     test_examples = sess.run(data_test.reduce(np.int64(0), lambda x, _: x + 1))
 
 data_train = pipeline(data_train, flip=True, crop=True, batch_size=args.batch_size, shuffle_buffer_size=10000)
+data_train = data_train.map(datasets.dict_to_tuple, AUTO)
 data_test = pipeline(data_test, flip=False, crop=False, batch_size=args.batch_size)
+data_test = data_test.map(datasets.dict_to_tuple, AUTO)
 
 input = tfk.layers.Input(shape=[32, 32, 3])
 if args.model == 'resnet18':

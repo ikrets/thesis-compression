@@ -1,5 +1,6 @@
 import dataclasses
 import tensorflow as tf
+from typing import Dict, Tuple
 
 
 @dataclasses.dataclass
@@ -43,20 +44,6 @@ def deserialize_example(example_string):
 
     return tf.io.parse_single_example(example_string, feature_description)
 
-def serialize_gradcam_example(name, X, gradcam_heatmap):
-    feature = {
-        'name': tf.train.Feature(bytes_list=tf.train.BytesList(value=[name.encode()])),
-        'X': tf.train.Feature(bytes_list=tf.train.BytesList(value=[X])),
-        'gradcam_heatmap': tf.train.Feature(bytes_list=tf.train.BytesList(value=[gradcam_heatmap]))
-    }
-    return tf.train.Example(features=tf.train.Features(feature=feature)).SerializeToString()
-
-def deserialize_gradcam_example(example_string):
-    feature_description = {
-        'name': tf.io.FixedLenFeature([], tf.string),
-        'X': tf.io.FixedLenFeature([], tf.string),
-        'gradcam_heatmap': tf.io.FixedLenFeature([], tf.string)
-    }
-
-    return tf.io.parse_single_example(example_string, feature_description)
+def dict_to_tuple(item: Dict[str, tf.Tensor]) -> Tuple[tf.Tensor, tf.Tensor]:
+    return item['X'], item['label']
 

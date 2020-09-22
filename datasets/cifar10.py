@@ -23,6 +23,7 @@ def filename_to_one_hot_label(fname):
     cl = tf.strings.to_number(parts[-2], out_type=tf.int32)
     return tf.one_hot(cl, depth=10)
 
+
 def filename_to_label(fname):
     parts = tf.strings.split([fname], sep='/').values
     cl = tf.strings.to_number(parts[-2], out_type=tf.int32)
@@ -66,14 +67,30 @@ def read_compressed_tfrecords(files: Sequence[Union[str, Path]]) -> Tuple[tf.dat
     return train_dataset, test_dataset
 
 
-def pipeline(dataset, batch_size, flip, crop, classifier_normalize=True,
+def pipeline(dataset, batch_size, flip, crop,
+             gradcam_dir: Optional[str] = None,
+             classifier_normalize=True,
              shuffle_buffer_size: Optional[int] = None,
              correct_bgr=False,
              repeat=True):
     dataset = dataset.map(lambda item: {'X': process_image(item['X']),
                                         'name': item['name'],
                                         'label': filename_to_one_hot_label(item['name'])},
-                          AUTO).cache()
+                          AUTO)
+    if gradcam_dir:
+        def read_gradcam_heatmap(fname):
+            heatmap_fname = tf.strings.join([gradcam_dir, fname], separator='/')
+            heatmap = tf.io.read_file(heatmap_fname)
+            heatmap = tf.image.decode_png(heatmap)
+            heatmap = tf.cast(heatmap, tf.float32) / 255
+            return heatmap
+
+        dataset = dataset.map(lambda item: {'X': item['X'],
+                                            'name': item['name'],
+                                            'label': item['label'],
+                                            'gradcam_heatmap': read_gradcam_heatmap(item['name'])})
+
+    dataset = dataset.cache()
 
     def process_X(X):
         if classifier_normalize:
@@ -85,7 +102,11 @@ def pipeline(dataset, batch_size, flip, crop, classifier_normalize=True,
             X = tf.image.random_flip_left_right(X)
         return X
 
-    dataset = dataset.map(lambda item: (process_X(item['X']), item['label']))
+    if not gradcam_dir:
+        dataset = dataset.map(lambda item: {'X': process_X(item['X']), 'label': item['label']})
+    else:
+        dataset = dataset.map(lambda item: {'X': process_X(item['X']), 'label': item['label'],
+                                            'gradcam_heatmap': item['gradcam_heatmap']})
     if shuffle_buffer_size:
         dataset = dataset.shuffle(shuffle_buffer_size)
     dataset = dataset.batch(batch_size)
@@ -94,3 +115,4 @@ def pipeline(dataset, batch_size, flip, crop, classifier_normalize=True,
         dataset = dataset.repeat()
 
     return dataset
+

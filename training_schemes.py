@@ -40,7 +40,11 @@ class CompressorWithDownstreamLoss:
         bpp = bits_per_pixel(compressor_outputs['Y_likelihoods'], tf.shape(batch['X']))
         psnr = tf.image.psnr(batch['X'], clipped_X_tilde, max_val=1.)
 
-        downstream_loss = self.downstream_loss.loss(X=batch['X'], X_reconstruction=clipped_X_tilde, label=batch['label'])
+        item = dict(X=batch['X'], X_reconstruction=clipped_X_tilde, label=batch['label'])
+        if 'gradcam_heatmap' in batch:
+            item['gradcam_heatmap'] = batch['gradcam_heatmap']
+
+        downstream_loss = self.downstream_loss.loss(item)
         compressed_metric = self.downstream_loss.metric(label=batch['label'], X_reconstruction=clipped_X_tilde)
 
         total = batch['lambda'] * mse * (255 ** 2) + batch['alpha'] * downstream_loss * (
@@ -173,4 +177,3 @@ class CompressorWithDownstreamLoss:
 
             train_logger.writer.flush()
             val_logger.writer.flush()
-

@@ -29,18 +29,16 @@ def prepare_dataset(args) -> datasets.DatasetSetup:
                                                   crop=True,
                                                   batch_size=args.batchsize,
                                                   shuffle_buffer_size=10000,
-                                                  classifier_normalize=False)
-        train_dataset = train_dataset.map(lambda X, label: {'X': X, 'label': label},
-                                          num_parallel_calls=tf.data.experimental.AUTOTUNE)
+                                                  classifier_normalize=False,
+                                                  gradcam_dir=args.gradcam_heatmaps)
         train_dataset = train_dataset.prefetch(1)
         train_steps = math.ceil(train_examples / args.batchsize)
         val_dataset = datasets.cifar10.pipeline(data_test,
                                                 flip=False,
                                                 crop=False,
                                                 batch_size=args.eval_batchsize,
-                                                classifier_normalize=False)
-        val_dataset = val_dataset.map(lambda X, label: {'X': X, 'label': label},
-                                      num_parallel_calls=tf.data.experimental.AUTOTUNE)
+                                                classifier_normalize=False,
+                                                gradcam_dir=args.gradcam_heatmaps)
         val_dataset = val_dataset.prefetch(1)
         val_steps = math.ceil(val_examples / args.eval_batchsize)
 
@@ -101,6 +99,10 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
         downstream_loss = models.downstream_losses.TaskCrossEntropy(model=downstream_model,
                                                                     preprocess_fn=preprocess_fn,
                                                                     metric_fn=tf.keras.metrics.categorical_accuracy)
+    elif args.downstream_loss == 'gradcam':
+        downstream_loss = models.downstream_losses.Gradcam(model=downstream_model,
+                                                           preprocess_fn=preprocess_fn,
+                                                           metric_fn=tf.keras.metrics.categorical_accuracy)
     else:
         assert False
 
@@ -182,11 +184,13 @@ parser.add_argument('--downstream_model', type=str, required=True)
 parser.add_argument('--downstream_model_weights', type=str)
 parser.add_argument('--experiment_dir', type=str, required=True)
 
-parser.add_argument('--downstream_loss', choices=['perceptual', 'prediction_crossentropy', 'task_crossentropy'],
+parser.add_argument('--downstream_loss',
+                    choices=['perceptual', 'prediction_crossentropy', 'task_crossentropy', 'gradcam'],
                     default='perceptual')
 parser.add_argument('--perceptual_loss_readouts', type=str, nargs='+')
 parser.add_argument('--perceptual_loss_normalize_activations', action='store_true')
 parser.add_argument('--perceptual_loss_backbone_prefix', type=str)
+parser.add_argument('--gradcam_heatmaps', type=str)
 
 parser.add_argument('--no_slug', action='store_true')
 parser.add_argument('--fp16', action='store_true')

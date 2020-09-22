@@ -1,6 +1,6 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
-from typing import Callable, Sequence, Any, Optional
+from typing import Callable, Sequence, Optional, Dict
 
 tfd = tfp.distributions
 
@@ -32,13 +32,9 @@ class PerceptualLoss:
                                              outputs=[self.backbone_model.get_layer(L).output for L in
                                                       self.readout_layers])
 
-    def loss(self,
-             X: tf.Tensor,
-             X_reconstruction: tf.Tensor,
-             label: tf.Tensor) -> tf.Tensor:
-
-        original_readouts = self.model_readouts(self.preprocess_fn(X))
-        reconstruction_readouts = self.model_readouts(self.preprocess_fn(X_reconstruction))
+    def loss(self, item: Dict[str, tf.Tensor]) -> tf.Tensor:
+        original_readouts = self.model_readouts(self.preprocess_fn(item['X']))
+        reconstruction_readouts = self.model_readouts(self.preprocess_fn(item['X_reconstruction']))
 
         # tf.keras.Model squeezes a list of one output
         if len(self.readout_layers) == 1:
@@ -74,9 +70,9 @@ class PredictionCrossEntropy:
         self.metric_fn = metric_fn
         self.preprocess_fn = preprocess_fn
 
-    def loss(self, X: tf.Tensor, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
-        original_preds = self.model(self.preprocess_fn(X))
-        reconstruction_preds = self.model(self.preprocess_fn(X_reconstruction))
+    def loss(self, item: Dict[str, tf.Tensor]) -> tf.Tensor:
+        original_preds = self.model(self.preprocess_fn(item['X']))
+        reconstruction_preds = self.model(self.preprocess_fn(item['X_reconstruction']))
 
         original_dist = tfd.Categorical(probs=original_preds)
         reconstruction_dist = tfd.Categorical(probs=reconstruction_preds)
@@ -97,9 +93,27 @@ class TaskCrossEntropy:
         self.metric_fn = metric_fn
         self.preprocess_fn = preprocess_fn
 
-    def loss(self, X: tf.Tensor, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
-        reconstruction_preds = self.model(self.preprocess_fn(X_reconstruction))
-        return tf.keras.losses.categorical_crossentropy(label, reconstruction_preds)
+    def loss(self, item: Dict[str, tf.Tensor]) -> tf.Tensor:
+        reconstruction_preds = self.model(self.preprocess_fn(item['X_reconstruction']))
+        return tf.keras.losses.categorical_crossentropy(item['label'], reconstruction_preds)
+
+    def metric(self, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
+        return self.metric_fn(label, self.model(self.preprocess_fn(X_reconstruction)))
+
+
+class Gradcam:
+    def __init__(self,
+                 model: tf.keras.Model,
+                 metric_fn: Callable[[tf.Tensor, tf.Tensor], tf.Tensor],
+                 preprocess_fn: Callable[[tf.Tensor], tf.Tensor],
+                 ) -> None:
+        self.model = model
+        self.metric_fn = metric_fn
+        self.preprocess_fn = preprocess_fn
+
+    def loss(self, item: Dict[str, tf.Tensor]):
+        return tf.reduce_mean(item['gradcam_heatmap'] * tf.squared_difference(item['X'], item['X_reconstruction']),
+                              axis=[1, 2, 3])
 
     def metric(self, X_reconstruction: tf.Tensor, label: tf.Tensor) -> tf.Tensor:
         return self.metric_fn(label, self.model(self.preprocess_fn(X_reconstruction)))
