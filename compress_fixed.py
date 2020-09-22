@@ -11,7 +11,6 @@ from queue import Queue
 from typing import Dict, Tuple, Union
 
 import datasets
-from models.bpp_range import LogarithmicOrLinearFit
 from models.compressors import SimpleFiLMCompressor
 from experiment import save_experiment_params
 
