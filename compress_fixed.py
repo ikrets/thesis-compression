@@ -10,7 +10,7 @@ from threading import Thread
 from queue import Queue
 from typing import Dict, Tuple, Union
 
-import datasets.compressed
+import datasets
 from models.bpp_range import LogarithmicOrLinearFit
 from models.compressors import SimpleFiLMCompressor
 from experiment import save_experiment_params
@@ -58,11 +58,11 @@ def writer_fn(queue: Queue) -> None:
             name_parts = Path(name.decode('ascii')).parts[-4:]
 
             _, reconstructed_img_string = cv2.imencode('.png', reconstructed_img[..., ::-1])
-            example = datasets.compressed.serialize_example(name='/'.join(name_parts),
-                                                            range_coded_bpp=range_coded_bpp,
-                                                            X=reconstructed_img_string.tobytes(),
-                                                            alpha=alpha,
-                                                            lmbda=lmbda)
+            example = datasets.serialize_example(name='/'.join(name_parts),
+                                                 range_coded_bpp=range_coded_bpp,
+                                                 X=reconstructed_img_string.tobytes(),
+                                                 alpha=alpha,
+                                                 lmbda=lmbda)
             writer.write(example)
 
     writer.close()
