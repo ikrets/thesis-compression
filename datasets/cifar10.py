@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 from typing import Optional, Union, Tuple, Sequence
 
-import datasets.compressed
+import datasets
 
 AUTO = tf.data.experimental.AUTOTUNE
 
@@ -22,6 +22,11 @@ def filename_to_one_hot_label(fname):
     parts = tf.strings.split([fname], sep='/').values
     cl = tf.strings.to_number(parts[-2], out_type=tf.int32)
     return tf.one_hot(cl, depth=10)
+
+def filename_to_label(fname):
+    parts = tf.strings.split([fname], sep='/').values
+    cl = tf.strings.to_number(parts[-2], out_type=tf.int32)
+    return cl
 
 
 def process_image(img_string: tf.Tensor) -> tf.Tensor:
@@ -54,7 +59,7 @@ def count_bpg_bpps(dir: Union[str, Path]) -> float:
 def read_compressed_tfrecords(files: Sequence[Union[str, Path]]) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     dataset = tf.data.TFRecordDataset([str(f) for f in files])
 
-    dataset = dataset.map(datasets.compressed.deserialize_example, AUTO)
+    dataset = dataset.map(datasets.deserialize_example, AUTO)
     train_dataset = dataset.filter(lambda item: tf.strings.regex_full_match(item['name'], '.*train.*'))
     test_dataset = dataset.filter(lambda item: tf.strings.regex_full_match(item['name'], '.*test.*'))
 
