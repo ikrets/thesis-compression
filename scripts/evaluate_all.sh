@@ -54,7 +54,7 @@ done
 
 # resnet18, BPG
 for learned_c_model in $EXPERIMENT_DIR/cifar10_resnet18/bpg/*/; do
-  output_dir="$EVALUATION_DIR/cifar10_resnet18/bpg/$(basename $(dirname $learned_c_model))/$(basename $learned_c_model)"
+  output_dir="$EVALUATION_DIR/cifar10_resnet18/bpg/$(basename $learned_c_model)"
   echo "Processing $output_dir."
 
   if [ -f $output_dir/results.csv ]; then
@@ -62,11 +62,18 @@ for learned_c_model in $EXPERIMENT_DIR/cifar10_resnet18/bpg/*/; do
     continue
   fi
 
+  if [ -f $learned_c_model/c_model_bgr ]; then
+    maybe_correct_c_model="--downstream_C_model_correct_bgr"
+  else
+    maybe_correct_c_model=""
+  fi
+
   python evaluator.py --batch_size 2048 \
     --uncompressed_dataset data/datasets/cifar-10 \
     --downstream_O_model data/trained_models/cifar-10/resnet18/uncompressed_bgr/model.hdf5 \
     --downstream_O_model_weights data/trained_models/cifar-10/resnet18/uncompressed_bgr/final_weights.hdf5 \
     --downstream_O_model_correct_bgr \
+    $maybe_correct_c_model \
     --compressed_dataset_1 "$BPG_DATASETS/$(basename $learned_c_model)" \
     --compressed_dataset_1_type files \
     --compressed_dataset_2 "$BPG_DATASETS/$(basename $learned_c_model)" \

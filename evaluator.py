@@ -23,6 +23,7 @@ parser.add_argument('--compressed_dataset_2', type=str, required=True,
                     help='the compressed dataset for evaluating performance in O2C and C2C')
 parser.add_argument('--compressed_dataset_2_type', choices=['files', 'tfrecords'], default='tfrecords')
 parser.add_argument('--downstream_C_model', type=str, required=True)
+parser.add_argument('--downstream_C_model_correct_bgr', action='store_true')
 parser.add_argument('--skip_C2C', action='store_true')
 parser.add_argument('--output_dir', type=str, required=True)
 
@@ -66,6 +67,7 @@ if args.downstream_O_model:
                                          flip=False,
                                          crop=False,
                                          classifier_normalize=True,
+                                         correct_bgr=args.downstream_C_model_correct_bgr,
                                          repeat=False)
     C2O_data = C2O_data.map(datasets.dict_to_tuple, AUTO)
 
@@ -100,6 +102,7 @@ if not args.skip_C2C:
                                          flip=False,
                                          crop=False,
                                          classifier_normalize=True,
+                                         correct_bgr=args.downstream_C_model_correct_bgr,
                                          repeat=False)
     C2C_data = C2C_data.map(datasets.dict_to_tuple, AUTO)
     results['c2c_accuracy'] = downstream_C_model.evaluate(C2C_data)[1]
