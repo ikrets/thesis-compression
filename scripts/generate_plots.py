@@ -77,9 +77,9 @@ for accuracy_type in ['o2c_accuracy', 'c2o_accuracy', 'c2c_accuracy']:
 
         axes[i].set_xbound(0.5, 2.1)
         if accuracy_type == 'o2c_accuracy':
-            axes[i].set_ybound(0.65, 1)
+            axes[i].set_ybound(0.67, 1)
         elif accuracy_type == 'c2o_accuracy':
-            axes[i].set_ybound(0.9, 1)
+            axes[i].set_ybound(0.92, 1)
         else:
             axes[i].set_ybound(0.87, 1)
 
