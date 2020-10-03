@@ -122,7 +122,7 @@ for vgg_c in $EXPERIMENT_DIR/cifar10_vgg16/*/*/; do
 
   vgg_loss=$(basename "$(dirname "$vgg_c")")
   vgg_loss_param=$(basename "$vgg_c")
-  output_dir="$EVALUATION_DIR/cifar10_Ovgg16_Cresnet18/$vgg_loss/$vgg_loss_param"
+  output_dir="$EVALUATION_DIR/cifar10_Oresnet18_Cvgg16/$vgg_loss/$vgg_loss_param"
   echo "Processing $output_dir."
 
   if [ -f "$output_dir/results.csv" ]; then
@@ -152,7 +152,7 @@ for resnet_c in $EXPERIMENT_DIR/cifar10_resnet18/*/*/; do
 
   resnet_loss=$(basename "$(dirname "$resnet_c")")
   resnet_loss_param=$(basename "$resnet_c")
-  output_dir="$EVALUATION_DIR/cifar10_Oresnet18_Cvgg16/$resnet_loss/$resnet_loss_param"
+  output_dir="$EVALUATION_DIR/cifar10_Ovgg16_Cresnet18/$resnet_loss/$resnet_loss_param"
   echo "Processing $output_dir."
 
   if [[ "$resnet_loss_param" =~ "epoch_check" ]]; then
