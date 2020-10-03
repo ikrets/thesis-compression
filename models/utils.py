@@ -9,7 +9,7 @@ def make_stepwise(base_lr, boundaries, multiplier):
     return sched
 
 class LRandWDScheduler(tf.keras.callbacks.Callback):
-    def __init__(self, multiplier_schedule, base_lr, base_wd, fp16):
+    def __init__(self, multiplier_schedule, base_lr, base_wd, fp16=False):
         super(LRandWDScheduler, self).__init__()
         self.multiplier_schedule = multiplier_schedule
         self.base_lr = base_lr

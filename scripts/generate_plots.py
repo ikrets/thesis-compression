@@ -74,8 +74,14 @@ for accuracy_type in ['o2c_accuracy', 'c2o_accuracy', 'c2c_accuracy']:
                                          functions=(lambda x, architecture=architecture: x * o2o_values[architecture],
                                                     lambda y, architecture=architecture: y / o2o_values[architecture]))
         sec_ax.set_ylabel('{} value'.format(accuracy_type))
-        axes[i].set_xbound(0.5, 2.5)
-        axes[i].set_ybound(0.8, 1)
+
+        axes[i].set_xbound(0.5, 2.1)
+        if accuracy_type == 'o2c_accuracy':
+            axes[i].set_ybound(0.65, 1)
+        elif accuracy_type == 'c2o_accuracy':
+            axes[i].set_ybound(0.9, 1)
+        else:
+            axes[i].set_ybound(0.87, 1)
 
     plt.tight_layout()
     target_file = output_dir / 'compare_compressors' / '{}.pdf'.format(accuracy_type)
