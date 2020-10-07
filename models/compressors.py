@@ -1,5 +1,6 @@
 import tensorflow.compat.v1 as tf
 import tensorflow_compression as tfc
+import numpy as np
 
 tfk = tf.keras
 tfkl = tf.keras.layers
@@ -172,6 +173,67 @@ class SynthesisTransform(tfkl.Layer):
         return feature_maps
 
 
+class HyperAnalysisTransform(tf.keras.layers.Layer):
+    """The analysis transform for the entropy model parameters."""
+
+    def __init__(self, num_filters, *args, **kwargs):
+        self.num_filters = num_filters
+        super(HyperAnalysisTransform, self).__init__(*args, **kwargs)
+
+    def build(self, input_shape):
+        self._layers = [
+            tfc.SignalConv2D(
+                self.num_filters, (3, 3), name="layer_0", corr=True, strides_down=1,
+                padding="same_zeros", use_bias=True,
+                activation=tf.nn.relu),
+            tfc.SignalConv2D(
+                self.num_filters, (5, 5), name="layer_1", corr=True, strides_down=2,
+                padding="same_zeros", use_bias=True,
+                activation=tf.nn.relu),
+            tfc.SignalConv2D(
+                self.num_filters, (5, 5), name="layer_2", corr=True, strides_down=2,
+                padding="same_zeros", use_bias=False,
+                activation=None),
+        ]
+        super(HyperAnalysisTransform, self).build(input_shape)
+
+    def call(self, tensor):
+        for layer in self._layers:
+            tensor = layer(tensor)
+        return tensor
+
+
+class HyperSynthesisTransform(tf.keras.layers.Layer):
+    """The synthesis transform for the entropy model parameters."""
+
+    def __init__(self, num_filters, *args, **kwargs):
+        self.num_filters = num_filters
+        super(HyperSynthesisTransform, self).__init__(*args, **kwargs)
+
+    def build(self, input_shape):
+        self._layers = [
+            tfc.SignalConv2D(
+                self.num_filters, (5, 5), name="layer_0", corr=False, strides_up=2,
+                padding="same_zeros", use_bias=True, kernel_parameterizer=None,
+                activation=tf.nn.relu),
+            tfc.SignalConv2D(
+                self.num_filters, (5, 5), name="layer_1", corr=False, strides_up=2,
+                padding="same_zeros", use_bias=True, kernel_parameterizer=None,
+                activation=tf.nn.relu),
+            tfc.SignalConv2D(
+                self.num_filters, (3, 3), name="layer_2", corr=False, strides_up=1,
+                padding="same_zeros", use_bias=True, kernel_parameterizer=None,
+                activation=None),
+        ]
+        super(HyperSynthesisTransform, self).build(input_shape)
+
+    def call(self, tensor):
+        for layer in self._layers:
+            tensor = layer(tensor)
+        return tensor
+
+
+
 class SimpleFiLMCompressor(tfk.Model):
     def __init__(self, num_filters, depth, num_postproc, FiLM_depth, FiLM_width, FiLM_activation, **kwargs):
         super(SimpleFiLMCompressor, self).__init__(**kwargs)
@@ -215,9 +277,77 @@ class SimpleFiLMCompressor(tfk.Model):
         }
 
 
-def bits_per_pixel(Y_likelihoods, X_shape):
+class HyperpriorCompressor(tfk.Model):
+    SCALES_MIN = 0.11
+    SCALES_MAX = 256
+    SCALES_LEVELS = 64
+
+    def __init__(self, num_filters, **kwargs):
+        super(HyperpriorCompressor, self).__init__(**kwargs)
+        self.analysis_transform = AnalysisTransform(num_filters, depth=4, num_postproc=0)
+        self.synthesis_transform = SynthesisTransform(num_filters, depth=4, num_postproc=0)
+        self.hyper_analysis_transform = HyperAnalysisTransform(num_filters)
+        self.hyper_synthesis_transform = HyperSynthesisTransform(num_filters)
+        self.entropy_bottleneck = tfc.EntropyBottleneck()
+        self.num_filters = num_filters
+
+    def forward(self, item, training):
+        Y = self.analysis_transform([0, item['X']])
+        Z = self.hyper_analysis_transform(tf.abs(Y))
+        Z_tilde, Z_likelihoods = self.entropy_bottleneck(Z, training=training)
+        sigma = self.hyper_synthesis_transform(Z_tilde)
+        scale_table = np.exp(np.linspace(np.log(self.SCALES_MIN), np.log(self.SCALES_MAX), self.SCALES_LEVELS))
+        conditional_bottleneck = tfc.GaussianConditional(sigma, scale_table)
+        Y_tilde, Y_likelihoods = conditional_bottleneck(Y, training=training)
+        X_tilde = self.synthesis_transform([0, Y_tilde])
+
+        return {
+            'Y': Y,
+            'Y_tilde': Y_tilde,
+            'Y_likelihoods': Y_likelihoods,
+            'Z': Z,
+            'Z_tilde': Z_tilde,
+            'Z_likelihoods': Z_likelihoods,
+            'X_tilde': X_tilde
+        }
+
+    def forward_with_range_coding(self, item):
+        Y = self.analysis_transform([0, item['X']])
+        Y_shape = tf.shape(Y)
+        Z = self.hyper_analysis_transform(tf.abs(Y))
+        Z_hat, Z_likelihoods = self.entropy_bottleneck(Z, training=False)
+        sigma = self.hyper_synthesis_transform(Z_hat)
+        sigma = sigma[:, :Y_shape[1], :Y_shape[2], :]
+        scale_table = np.exp(np.linspace(np.log(self.SCALES_MIN), np.log(self.SCALES_MAX), self.SCALES_LEVELS))
+        conditional_bottleneck = tfc.GaussianConditional(sigma, scale_table)
+        Z_coded = self.entropy_bottleneck.compress(Z)
+        Y_coded = conditional_bottleneck.compress(Y)
+
+        height = tf.shape(item['X'])[1]
+        width = tf.shape(item['X'])[2]
+        coded_bpp = (tf.strings.length(Z_coded) + tf.strings.length(Y_coded)) * 8 / height / width
+
+        Z_hat = self.entropy_bottleneck.decompress(Z_coded, tf.shape(Z), channels=self.num_filters)
+        sigma = self.hyper_synthesis_transform(Z_hat)
+        sigma = sigma[:, :Y_shape[1], :Y_shape[2], :]
+        conditional_bottleneck = tfc.GaussianConditional(sigma, scale_table, dtype=tf.float32)
+        Y_hat = conditional_bottleneck.decompress(Y_coded)
+        X_hat = self.synthesis_transform([0, Y_hat])
+
+        return {
+            'X_reconstructed': X_hat,
+            'range_coded_bpp': coded_bpp
+        }
+
+
+
+def bits_per_pixel(item, X_shape):
     num_pixels = tf.cast(X_shape[1] * X_shape[2], tf.float32)
-    return tf.reduce_sum(tf.log(Y_likelihoods), axis=[1, 2, 3]) / (-tf.math.log(2.) * num_pixels)
+    bpp = tf.reduce_sum(tf.log(item['Y_likelihoods']), axis=[1, 2, 3])
+    if 'Z_likelihoods' in item:
+        bpp += tf.reduce_sum(tf.log(item['Z_likelihoods']), axis=[1, 2, 3])
+
+    return bpp / (-tf.math.log(2.) * num_pixels)
 
 
 def pipeline_add_sampled_parameters(dataset, alpha_range, lambda_range, sample_fn):

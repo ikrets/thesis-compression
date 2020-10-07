@@ -4,10 +4,10 @@ from pathlib import Path
 import tensorflow as tf
 import numpy as np
 from tqdm import trange
-from typing import Callable, Sequence
+from typing import Callable, Sequence, Union
 
 import datasets
-from models.compressors import SimpleFiLMCompressor, bits_per_pixel
+from models.compressors import SimpleFiLMCompressor, HyperpriorCompressor, bits_per_pixel
 from models.downstream_losses import PerceptualLoss
 from visualization.tensorboard import original_reconstruction_comparison
 from visualization.tensorboard_logging import Logger
@@ -15,7 +15,7 @@ from visualization.tensorboard_logging import Logger
 
 class CompressorWithDownstreamLoss:
     def __init__(self,
-                 compressor: SimpleFiLMCompressor,
+                 compressor: Union[SimpleFiLMCompressor, HyperpriorCompressor],
                  downstream_loss: PerceptualLoss) -> None:
         self.compressor = compressor
         self.downstream_loss = downstream_loss
@@ -37,7 +37,7 @@ class CompressorWithDownstreamLoss:
         clipped_X_tilde = tf.clip_by_value(compressor_outputs['X_tilde'], 0, 1)
 
         mse = tf.reduce_mean(tf.math.squared_difference(batch['X'], clipped_X_tilde), axis=[1, 2, 3])
-        bpp = bits_per_pixel(compressor_outputs['Y_likelihoods'], tf.shape(batch['X']))
+        bpp = bits_per_pixel(compressor_outputs, tf.shape(batch['X']))
         psnr = tf.image.psnr(batch['X'], clipped_X_tilde, max_val=1.)
 
         item = dict(X=batch['X'], X_reconstruction=clipped_X_tilde, label=batch['label'])

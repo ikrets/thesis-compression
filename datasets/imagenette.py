@@ -1,4 +1,5 @@
 import tensorflow as tf
+import json
 from pathlib import Path
 from typing import Union, Tuple, Optional
 
@@ -6,9 +7,9 @@ AUTO = tf.data.experimental.AUTOTUNE
 
 
 def path_to_files_labels(path):
-    label_to_id = {l[1].name: l[0] for l in enumerate(sorted(path.glob('*/')))}
+    mapping = imagenette_to_imagenet_mapping()
     files = list(path.glob('*/*.JPEG'))
-    labels = [label_to_id[t.parent.name] for t in files]
+    labels = [mapping[t.parent.name] for t in files]
     files = [str(f) for f in files]
 
     return files, labels
@@ -44,6 +45,12 @@ def augment(image, Y, size):
     image = tf.image.random_flip_left_right(image)
     return image, Y
 
+def imagenette_to_imagenet_mapping():
+    with open('datasets/imagenet_class_index.json', 'r') as fp:
+        class_index = json.load(fp)
+
+    return {v[0]: int(k) for k, v in class_index.items()}
+
 
 def pipeline(dataset, batch_size, size, is_training,
              min_height, min_width,
@@ -51,8 +58,9 @@ def pipeline(dataset, batch_size, size, is_training,
     if is_training:
         dataset = dataset.shuffle(10000)
 
+
     def preprocess_fn(X, Y):
-        return preprocess_img(X, size=size, is_training=is_training), tf.one_hot(Y, depth=10)
+        return preprocess_img(X, size=size, is_training=is_training), tf.one_hot(Y, depth=1000)
 
     dataset = dataset.map(preprocess_fn, AUTO)
 
@@ -72,6 +80,7 @@ def pipeline(dataset, batch_size, size, is_training,
 
         dataset = dataset.map(resize_fn, AUTO)
 
+    dataset = dataset.map(lambda X, Y: {'X': X, 'label': Y}, AUTO)
     dataset = dataset.batch(batch_size)
 
     if repeat:

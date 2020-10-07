@@ -5,7 +5,7 @@ from tensorboard.plugins.hparams import api_pb2
 from tensorboard.plugins.hparams import summary
 
 import datasets
-from models.compressors import SimpleFiLMCompressor
+from models.compressors import SimpleFiLMCompressor, HyperpriorCompressor
 from models import compressors
 from training_schemes import CompressorWithDownstreamLoss
 import models.downstream_losses
@@ -16,31 +16,47 @@ from models.utils import make_stepwise
 
 from experiment import save_experiment_params
 import datasets.cifar10
+import datasets.imagenette
 
 
 def prepare_dataset(args) -> datasets.DatasetSetup:
     with tf.device("/cpu:0"):
         dataset = Path(args.dataset)
-        data_train, train_examples = datasets.cifar10.read_images(dataset / 'train')
-        data_test, val_examples = datasets.cifar10.read_images(dataset / 'test')
 
-        train_dataset = datasets.cifar10.pipeline(data_train,
-                                                  flip=True,
-                                                  crop=True,
-                                                  batch_size=args.batchsize,
-                                                  shuffle_buffer_size=10000,
-                                                  classifier_normalize=False,
-                                                  gradcam_dir=args.gradcam_heatmaps)
-        train_dataset = train_dataset.prefetch(1)
-        train_steps = math.ceil(train_examples / args.batchsize)
-        val_dataset = datasets.cifar10.pipeline(data_test,
-                                                flip=False,
-                                                crop=False,
-                                                batch_size=args.eval_batchsize,
-                                                classifier_normalize=False,
-                                                gradcam_dir=args.gradcam_heatmaps)
-        val_dataset = val_dataset.prefetch(1)
-        val_steps = math.ceil(val_examples / args.eval_batchsize)
+        if args.dataset_type == 'cifar10':
+            data_train, train_examples = datasets.cifar10.read_images(dataset / 'train')
+            data_test, val_examples = datasets.cifar10.read_images(dataset / 'test')
+
+            train_dataset = datasets.cifar10.pipeline(data_train,
+                                                      flip=True,
+                                                      crop=True,
+                                                      batch_size=args.batchsize,
+                                                      shuffle_buffer_size=10000,
+                                                      classifier_normalize=False,
+                                                      gradcam_dir=args.gradcam_heatmaps)
+            train_dataset = train_dataset.prefetch(1)
+            val_dataset = datasets.cifar10.pipeline(data_test,
+                                                    flip=False,
+                                                    crop=False,
+                                                    batch_size=args.eval_batchsize,
+                                                    classifier_normalize=False,
+                                                    gradcam_dir=args.gradcam_heatmaps)
+            val_dataset = val_dataset.prefetch(1)
+        elif args.dataset_type == 'imagenette':
+            data_train, train_examples = datasets.imagenette.read_images(dataset / 'train')
+            data_test, val_examples = datasets.imagenette.read_images(dataset / 'val')
+
+            train_dataset = datasets.imagenette.pipeline(data_train, batch_size=args.batchsize, size=args.image_size,
+                                                         is_training=True,
+                                                         min_height=args.min_image_size,
+                                                         min_width=args.min_image_size)
+            val_dataset = datasets.imagenette.pipeline(data_test, batch_size=args.batchsize, size=args.image_size,
+                                                       is_training=False,
+                                                       min_height=args.min_image_size,
+                                                       min_width=args.min_image_size)
+
+    train_steps = math.ceil(train_examples / args.batchsize)
+    val_steps = math.ceil(val_examples / args.eval_batchsize)
 
     return datasets.DatasetSetup(
         train_dataset=train_dataset,
@@ -70,17 +86,26 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
         main_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(main_optimizer)
         aux_optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(aux_optimizer)
 
-    compressor = SimpleFiLMCompressor(num_filters=args.num_filters,
-                                      depth=args.depth,
-                                      num_postproc=0,
-                                      FiLM_depth=0,
-                                      FiLM_width=0,
-                                      FiLM_activation=None)
+    if args.compressor == 'simple':
+        compressor = SimpleFiLMCompressor(num_filters=args.num_filters,
+                                          depth=args.depth,
+                                          num_postproc=0,
+                                          FiLM_depth=0,
+                                          FiLM_width=0,
+                                          FiLM_activation=None)
+    elif args.compressor == 'hyperprior':
+        compressor = HyperpriorCompressor(num_filters=args.num_filters)
+    else:
+        assert False
 
-    downstream_model = tf.keras.models.load_model(args.downstream_model)
-    if args.downstream_model_weights:
-        downstream_model.load_weights(args.downstream_model_weights)
-    preprocess_fn = lambda X: datasets.cifar10.normalize(X if not args.correct_bgr else X[..., ::-1])
+    if not args.pretrained_model:
+        downstream_model = tf.keras.models.load_model(args.downstream_model)
+        if args.downstream_model_weights:
+            downstream_model.load_weights(args.downstream_model_weights)
+        preprocess_fn = lambda X: datasets.cifar10.normalize(X if not args.correct_bgr else X[..., ::-1])
+    else:
+        downstream_model = tf.keras.applications.ResNet50()
+        preprocess_fn = lambda X: X
 
     if args.downstream_loss == 'perceptual':
         downstream_loss = models.downstream_losses.PerceptualLoss(
@@ -179,9 +204,16 @@ parser.add_argument('--correct_bgr', action='store_true')
 parser.add_argument('--val_summary_period', type=int, default=5)
 parser.add_argument('--checkpoint_period', type=int, default=50)
 parser.add_argument('--dataset', type=str, required=True)
+parser.add_argument('--dataset_type', choices=['cifar10', 'imagenette'], default='cifar10')
+parser.add_argument('--min_image_size', type=int)
+parser.add_argument('--image_size', type=int)
 
-parser.add_argument('--downstream_model', type=str, required=True)
+parser.add_argument('--compressor', choices=['simple', 'hyperprior'], default='simple')
+
+parser.add_argument('--downstream_model', type=str)
 parser.add_argument('--downstream_model_weights', type=str)
+parser.add_argument('--pretrained_model', action='store_true')
+
 parser.add_argument('--experiment_dir', type=str, required=True)
 
 parser.add_argument('--downstream_loss',
