@@ -10,6 +10,7 @@ from models import compressors
 from training_schemes import CompressorWithDownstreamLoss
 import models.downstream_losses
 import tensorflow.compat.v1 as tf
+import numpy as np
 import coolname
 
 from models.utils import make_stepwise
@@ -34,14 +35,12 @@ def prepare_dataset(args) -> datasets.DatasetSetup:
                                                       shuffle_buffer_size=10000,
                                                       classifier_normalize=False,
                                                       gradcam_dir=args.gradcam_heatmaps)
-            train_dataset = train_dataset.prefetch(1)
             val_dataset = datasets.cifar10.pipeline(data_test,
                                                     flip=False,
                                                     crop=False,
                                                     batch_size=args.eval_batchsize,
                                                     classifier_normalize=False,
                                                     gradcam_dir=args.gradcam_heatmaps)
-            val_dataset = val_dataset.prefetch(1)
         elif args.dataset_type == 'imagenette':
             data_train, train_examples = datasets.imagenette.read_images(dataset / 'train')
             data_test, val_examples = datasets.imagenette.read_images(dataset / 'val')
@@ -105,7 +104,7 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
         preprocess_fn = lambda X: datasets.cifar10.normalize(X if not args.correct_bgr else X[..., ::-1])
     else:
         downstream_model = tf.keras.applications.ResNet50()
-        preprocess_fn = lambda X: X
+        preprocess_fn = lambda X: tf.keras.applications.resnet50.preprocess_input(X * 255)
 
     if args.downstream_loss == 'perceptual':
         downstream_loss = models.downstream_losses.PerceptualLoss(
@@ -186,55 +185,56 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
     writer.add_summary(summary.session_end_pb(api_pb2.STATUS_SUCCESS))
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--num_filters', type=int, default=192)
-parser.add_argument('--depth', type=int, required=True)
-parser.add_argument('--batchsize', type=int, default=128)
-parser.add_argument('--eval_batchsize', type=int, default=256)
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--num_filters', type=int, default=192)
+    parser.add_argument('--depth', type=int, required=True)
+    parser.add_argument('--batchsize', type=int, default=128)
+    parser.add_argument('--eval_batchsize', type=int, default=256)
 
-parser.add_argument('--optimizer', choices=['momentum', 'adam'], required=True)
-parser.add_argument('--main_lr', type=float, required=True)
-parser.add_argument('--aux_lr', type=float, required=True)
-parser.add_argument('--drop_lr_epochs', type=int, nargs='+')
-parser.add_argument('--drop_lr_multiplier', type=float, default=0.5)
+    parser.add_argument('--optimizer', choices=['momentum', 'adam'], required=True)
+    parser.add_argument('--main_lr', type=float, required=True)
+    parser.add_argument('--aux_lr', type=float, required=True)
+    parser.add_argument('--drop_lr_epochs', type=int, nargs='+')
+    parser.add_argument('--drop_lr_multiplier', type=float, default=0.5)
 
-parser.add_argument('--epochs', type=int, required=True)
-parser.add_argument('--correct_bgr', action='store_true')
+    parser.add_argument('--epochs', type=int, required=True)
+    parser.add_argument('--correct_bgr', action='store_true')
 
-parser.add_argument('--val_summary_period', type=int, default=5)
-parser.add_argument('--checkpoint_period', type=int, default=50)
-parser.add_argument('--dataset', type=str, required=True)
-parser.add_argument('--dataset_type', choices=['cifar10', 'imagenette'], default='cifar10')
-parser.add_argument('--min_image_size', type=int)
-parser.add_argument('--image_size', type=int)
+    parser.add_argument('--val_summary_period', type=int, default=5)
+    parser.add_argument('--checkpoint_period', type=int, default=50)
+    parser.add_argument('--dataset', type=str, required=True)
+    parser.add_argument('--dataset_type', choices=['cifar10', 'imagenette'], default='cifar10')
+    parser.add_argument('--min_image_size', type=int)
+    parser.add_argument('--image_size', type=int)
 
-parser.add_argument('--compressor', choices=['simple', 'hyperprior'], default='simple')
+    parser.add_argument('--compressor', choices=['simple', 'hyperprior'], default='simple')
 
-parser.add_argument('--downstream_model', type=str)
-parser.add_argument('--downstream_model_weights', type=str)
-parser.add_argument('--pretrained_model', action='store_true')
+    parser.add_argument('--downstream_model', type=str)
+    parser.add_argument('--downstream_model_weights', type=str)
+    parser.add_argument('--pretrained_model', action='store_true')
 
-parser.add_argument('--experiment_dir', type=str, required=True)
+    parser.add_argument('--experiment_dir', type=str, required=True)
 
-parser.add_argument('--downstream_loss',
-                    choices=['perceptual', 'prediction_crossentropy', 'task_crossentropy', 'gradcam'],
-                    default='perceptual')
-parser.add_argument('--perceptual_loss_readouts', type=str, nargs='+')
-parser.add_argument('--perceptual_loss_normalize_activations', action='store_true')
-parser.add_argument('--perceptual_loss_backbone_prefix', type=str)
-parser.add_argument('--gradcam_heatmaps', type=str)
+    parser.add_argument('--downstream_loss',
+                        choices=['perceptual', 'prediction_crossentropy', 'task_crossentropy', 'gradcam'],
+                        default='perceptual')
+    parser.add_argument('--perceptual_loss_readouts', type=str, nargs='+')
+    parser.add_argument('--perceptual_loss_normalize_activations', action='store_true')
+    parser.add_argument('--perceptual_loss_backbone_prefix', type=str)
+    parser.add_argument('--gradcam_heatmaps', type=str)
 
-parser.add_argument('--no_slug', action='store_true')
-parser.add_argument('--fp16', action='store_true')
+    parser.add_argument('--no_slug', action='store_true')
+    parser.add_argument('--fp16', action='store_true')
 
-subparsers = parser.add_subparsers(help='The training scheme')
+    subparsers = parser.add_subparsers(help='The training scheme')
 
-fixed_parameters = subparsers.add_parser('fixed_parameters')
-fixed_parameters.add_argument('--lambda', type=float, required=True, dest='lmbda')
-fixed_parameters.add_argument('--alpha', type=float, required=True)
-fixed_parameters.add_argument('--zero_alpha_epochs', type=int, default=0)
-fixed_parameters.add_argument('--anneal_alpha_epochs', type=int)
-fixed_parameters.set_defaults(func=run_fixed_parameters)
+    fixed_parameters = subparsers.add_parser('fixed_parameters')
+    fixed_parameters.add_argument('--lambda', type=float, required=True, dest='lmbda')
+    fixed_parameters.add_argument('--alpha', type=float, required=True)
+    fixed_parameters.add_argument('--zero_alpha_epochs', type=int, default=0)
+    fixed_parameters.add_argument('--anneal_alpha_epochs', type=int)
+    fixed_parameters.set_defaults(func=run_fixed_parameters)
 
-args = parser.parse_args()
-args.func(args)
+    args = parser.parse_args()
+    args.func(args)

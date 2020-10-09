@@ -3,7 +3,7 @@ import numpy as np
 import argparse
 import math
 from pathlib import Path
-from weight_decay_optimizers import SGDW
+from weight_decay_optimizers import SGDW, AdamW
 import tensorflow.keras.backend as K
 import coolname
 import optuna
@@ -13,6 +13,7 @@ from experiment import save_experiment_params
 from models.utils import LRandWDScheduler
 
 tfk = tf.keras
+AUTO = tf.data.experimental.AUTOTUNE
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, required=True)
@@ -37,9 +38,9 @@ def objective(trial):
     base_wd = trial.suggest_loguniform('wd', *args.base_wd_range)
     drop_lr_multiplier = trial.suggest_categorical('drop_lr_multiplier', args.drop_lr_multiplier_choices)
 
-    optimizer = SGDW(lr=base_lr,
-                     weight_decay=base_wd,
-                     momentum=0.9, name='sgdw')
+    optimizer = AdamW(lr=base_lr,
+                     weight_decay=base_wd)
+
     if args.fp16:
         optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(optimizer)
 
@@ -51,6 +52,9 @@ def objective(trial):
     data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False,
                          min_height=args.min_image_size[0],
                          min_width=args.min_image_size[1])
+    preprocess_fn = lambda item: (item['X'], item['label'])
+    data_train = data_train.map(preprocess_fn, AUTO)
+    data_test = data_test.map(preprocess_fn, AUTO)
 
     model = tf.keras.applications.ResNet50V2(weights=None, pooling='avg', classes=10,
                                              input_shape=[args.image_size, args.image_size, 3])
@@ -73,7 +77,7 @@ def objective(trial):
     experiment_path.mkdir(parents=True, exist_ok=True)
     tensorboard_callback = tfk.callbacks.TensorBoard(profile_batch=0,
                                                      log_dir=experiment_path)
-    pruning_callback = optuna.integration.KerasPruningCallback(trial, 'val_categorical_accuracy')
+    pruning_callback = optuna.integration.TFKerasPruningCallback(trial, 'val_categorical_accuracy')
 
     model.save(experiment_path / 'model.hdf5',
                include_optimizer=False)
@@ -90,7 +94,7 @@ def objective(trial):
 Path(args.study_storage_dir).mkdir(parents=True, exist_ok=True)
 save_experiment_params(args.study_storage_dir, args)
 study = optuna.create_study(study_name=args.study_name,
-                            direction='minimize',
+                            direction='maximize',
                             storage='sqlite:///{}/study.db'.format(args.study_storage_dir),
                             load_if_exists=True)
-study.optimize(objective, n_trials=20)
+study.optimize(objective, n_trials=args.n_trials)

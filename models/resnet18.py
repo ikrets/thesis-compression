@@ -43,3 +43,4 @@ def resnet18(inp):
 
     return tfk.Model(inputs=inp, outputs=out)
 
+

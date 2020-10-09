@@ -3,7 +3,7 @@ import numpy as np
 import argparse
 import math
 from pathlib import Path
-from weight_decay_optimizers import SGDW
+from weight_decay_optimizers import AdamW
 import tensorflow.keras.backend as K
 import coolname
 
@@ -12,6 +12,7 @@ from experiment import save_experiment_params
 from models.utils import LRandWDScheduler
 
 tfk = tf.keras
+AUTO = tf.data.experimental.AUTOTUNE
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, required=True)
@@ -26,10 +27,13 @@ parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--drop_lr_multiplier', type=float, default=0.1)
 parser.add_argument('--drop_lr_epochs', type=int, nargs='+', default=(60, 90))
 parser.add_argument('--experiment_dir', type=str, required=True)
+parser.add_argument('--fp16', action='store_true')
 parser.add_argument('--no_slug', action='store_true')
 args = parser.parse_args()
 
-optimizer = SGDW(lr=args.base_lr, weight_decay=args.base_wd, momentum=0.9, name='sgdw')
+optimizer = AdamW(lr=args.base_lr, weight_decay=args.base_wd)
+if args.fp16:
+    optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(optimizer)
 
 sess = tf.keras.backend.get_session()
 
@@ -63,7 +67,8 @@ def schedule(epoch):
 
 lr_and_wd_scheduler = LRandWDScheduler(multiplier_schedule=schedule,
                                        base_lr=args.base_lr,
-                                       base_wd=args.base_wd)
+                                       base_wd=args.base_wd,
+                                       fp16=args.fp16)
 
 tensorboard_callback = tfk.callbacks.TensorBoard(profile_batch=0,
                                                  log_dir=args.experiment_dir)
@@ -76,10 +81,15 @@ save_experiment_params(experiment_path, args)
 
 model.save(experiment_path / 'model.hdf5',
            include_optimizer=False)
-model.fit(data_train.prefetch(1),
+
+flatten = lambda item: (item['X'], item['label'])
+data_train = data_train.map(flatten, AUTO)
+data_test = data_test.map(flatten, AUTO)
+
+model.fit(data_train.prefetch(AUTO),
           epochs=args.epochs,
           steps_per_epoch=math.ceil(train_examples / args.batch_size),
-          validation_data=data_test.prefetch(1),
+          validation_data=data_test.prefetch(AUTO),
           validation_steps=math.ceil(test_examples / args.batch_size),
           callbacks=[lr_and_wd_scheduler, tensorboard_callback])
 model.save(experiment_path / 'final_model.hdf5', include_optimizer=False)

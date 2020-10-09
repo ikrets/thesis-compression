@@ -7,9 +7,9 @@ AUTO = tf.data.experimental.AUTOTUNE
 
 
 def path_to_files_labels(path):
-    mapping = imagenette_to_imagenet_mapping()
+    label_to_id = {l[1].name: l[0] for l in enumerate(sorted(path.glob('*/')))}
     files = list(path.glob('*/*.JPEG'))
-    labels = [mapping[t.parent.name] for t in files]
+    labels = [label_to_id[t.parent.name] for t in files]
     files = [str(f) for f in files]
 
     return files, labels
@@ -21,6 +21,9 @@ def preprocess_img(image_bytes, size, is_training):
                     true_fn=lambda: tf.image.grayscale_to_rgb(image),
                     false_fn=lambda: image)
     image = tf.cast(image, tf.float32) / 255
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    image = (image - mean) / std
 
     return image
 
@@ -60,7 +63,7 @@ def pipeline(dataset, batch_size, size, is_training,
 
 
     def preprocess_fn(X, Y):
-        return preprocess_img(X, size=size, is_training=is_training), tf.one_hot(Y, depth=1000)
+        return preprocess_img(X, size=size, is_training=is_training), tf.one_hot(Y, depth=10)
 
     dataset = dataset.map(preprocess_fn, AUTO)
 
