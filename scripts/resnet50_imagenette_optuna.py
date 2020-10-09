@@ -24,6 +24,7 @@ parser.add_argument('--bn_momentum', type=float, default=0.9)
 parser.add_argument('--base_lr_range', type=float, nargs=2)
 parser.add_argument('--base_wd_range', type=float, nargs=2)
 parser.add_argument('--epochs', type=int, default=100)
+parser.add_argument('--validation_freq', type=int, default=10)
 parser.add_argument('--drop_lr_multiplier_choices', type=float, nargs='+', required=True)
 parser.add_argument('--drop_lr_epochs', type=int, nargs='+', default=(60, 90))
 parser.add_argument('--fp16', action='store_true')
@@ -34,6 +35,8 @@ args = parser.parse_args()
 
 
 def objective(trial):
+    K.clear_session()
+
     base_lr = trial.suggest_loguniform('base_lr', *args.base_lr_range)
     base_wd = trial.suggest_loguniform('wd', *args.base_wd_range)
     drop_lr_multiplier = trial.suggest_categorical('drop_lr_multiplier', args.drop_lr_multiplier_choices)
@@ -81,11 +84,12 @@ def objective(trial):
 
     model.save(experiment_path / 'model.hdf5',
                include_optimizer=False)
-    history = model.fit(data_train.prefetch(1),
+    history = model.fit(data_train.prefetch(AUTO),
                         epochs=args.epochs,
                         steps_per_epoch=math.ceil(train_examples / args.batch_size),
-                        validation_data=data_test.prefetch(1),
+                        validation_data=data_test.prefetch(AUTO),
                         validation_steps=math.ceil(test_examples / args.batch_size),
+                        validation_freq=args.validation_freq,
                         callbacks=[lr_and_wd_scheduler, tensorboard_callback, pruning_callback])
     model.save(experiment_path / 'final_model.hdf5', include_optimizer=False)
     return history.history['val_categorical_accuracy'][-1]
@@ -96,5 +100,6 @@ save_experiment_params(args.study_storage_dir, args)
 study = optuna.create_study(study_name=args.study_name,
                             direction='maximize',
                             storage='sqlite:///{}/study.db'.format(args.study_storage_dir),
+                            pruner=optuna.pruners.MedianPruner(n_warmup_steps=20),
                             load_if_exists=True)
-study.optimize(objective, n_trials=args.n_trials)
+study.optimize(objective, n_trials=args.n_trials, gc_after_trial=True)

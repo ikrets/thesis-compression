@@ -73,6 +73,7 @@ def pipeline(dataset, batch_size, size, is_training,
     dataset = dataset.filter(filter_fn)
 
     if is_training:
+        dataset = dataset.cache()
         def augment_fn(image, Y):
             return augment(image, Y, size)
 
@@ -81,7 +82,7 @@ def pipeline(dataset, batch_size, size, is_training,
         def resize_fn(X, Y):
             return tf.compat.v2.image.resize_with_pad(X, size, size, method='bicubic'), Y
 
-        dataset = dataset.map(resize_fn, AUTO)
+        dataset = dataset.map(resize_fn, AUTO).cache()
 
     dataset = dataset.map(lambda X, Y: {'X': X, 'label': Y}, AUTO)
     dataset = dataset.batch(batch_size)

@@ -29,6 +29,7 @@ parser.add_argument('--drop_lr_epochs', type=int, nargs='+', default=(60, 90))
 parser.add_argument('--experiment_dir', type=str, required=True)
 parser.add_argument('--fp16', action='store_true')
 parser.add_argument('--no_slug', action='store_true')
+parser.add_argument('--validation_freq', type=int, default=10)
 args = parser.parse_args()
 
 optimizer = AdamW(lr=args.base_lr, weight_decay=args.base_wd)
@@ -91,5 +92,6 @@ model.fit(data_train.prefetch(AUTO),
           steps_per_epoch=math.ceil(train_examples / args.batch_size),
           validation_data=data_test.prefetch(AUTO),
           validation_steps=math.ceil(test_examples / args.batch_size),
+          validation_freq=args.validation_freq,
           callbacks=[lr_and_wd_scheduler, tensorboard_callback])
 model.save(experiment_path / 'final_model.hdf5', include_optimizer=False)
