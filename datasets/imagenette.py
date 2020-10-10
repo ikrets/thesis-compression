@@ -58,11 +58,15 @@ def pipeline(dataset, batch_size, size, is_training,
     def preprocess_fn(X, Y):
         return preprocess_img(X, size=size, is_training=is_training), tf.one_hot(Y, depth=10)
 
+    # if not caching, shuffle the filenames
+    if not cache and is_training:
+        dataset = dataset.shuffle(10000)
+
     dataset = dataset.map(preprocess_fn, AUTO)
     if cache:
         dataset = dataset.cache()
-
-    if is_training:
+    # if caching, need to shuffle the images
+    if cache and is_training:
         dataset = dataset.shuffle(10000)
 
     if is_training:
