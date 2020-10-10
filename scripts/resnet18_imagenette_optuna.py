@@ -18,6 +18,7 @@ AUTO = tf.data.experimental.AUTOTUNE
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, required=True)
+parser.add_argument('--cache', action='store_true')
 parser.add_argument('--image_size', type=int, default=256)
 parser.add_argument('--min_image_size', type=int, nargs=2, default=(300, 300))
 parser.add_argument('--batch_size', type=int, default=64)
@@ -43,15 +44,17 @@ def objective(trial):
     drop_lr_multiplier = trial.suggest_categorical('drop_lr_multiplier', args.drop_lr_multiplier_choices)
 
     optimizer = AdamW(lr=base_lr,
-                     weight_decay=base_wd)
+                      weight_decay=base_wd)
 
     if args.fp16:
         optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(optimizer)
 
     data_train, train_examples = read_images(Path(args.dataset) / 'train')
     data_test, test_examples = read_images(Path(args.dataset) / 'val')
-    data_train = pipeline(data_train, batch_size=args.batch_size, size=args.image_size, is_training=True)
-    data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False)
+    data_train = pipeline(data_train, batch_size=args.batch_size, size=args.image_size, is_training=True,
+                          cache=args.cache)
+    data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False,
+                         cache=args.cache)
     preprocess_fn = lambda item: (item['X'], item['label'])
     data_train = data_train.map(preprocess_fn, AUTO)
     data_test = data_test.map(preprocess_fn, AUTO)

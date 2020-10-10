@@ -17,6 +17,7 @@ AUTO = tf.data.experimental.AUTOTUNE
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, required=True)
+parser.add_argument('--cache', action='store_true')
 parser.add_argument('--image_size', type=int, default=256)
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--bn_momentum', type=float, default=0.9)
@@ -40,8 +41,8 @@ sess = tf.keras.backend.get_session()
 data_train, train_examples = read_images(Path(args.dataset) / 'train')
 data_test, test_examples = read_images(Path(args.dataset) / 'val')
 
-data_train = pipeline(data_train, batch_size=args.batch_size, size=args.image_size, is_training=True)
-data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False)
+data_train = pipeline(data_train, batch_size=args.batch_size, size=args.image_size, is_training=True, cache=args.cache)
+data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False, cache=args.cache)
 
 input = tfk.layers.Input(shape=[args.image_size, args.image_size, 3])
 model = resnet18_proper(input)

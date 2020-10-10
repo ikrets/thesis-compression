@@ -53,14 +53,17 @@ def imagenette_to_imagenet_mapping():
 
 
 def pipeline(dataset, batch_size, size, is_training,
+             cache=False,
              repeat=True):
-    if is_training:
-        dataset = dataset.shuffle(10000)
-
     def preprocess_fn(X, Y):
         return preprocess_img(X, size=size, is_training=is_training), tf.one_hot(Y, depth=10)
 
     dataset = dataset.map(preprocess_fn, AUTO)
+    if cache:
+        dataset = dataset.cache()
+
+    if is_training:
+        dataset = dataset.shuffle(10000)
 
     if is_training:
         def augment_fn(image, Y):

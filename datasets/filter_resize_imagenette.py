@@ -5,6 +5,8 @@ import argparse
 from PIL import Image
 from tqdm import tqdm
 
+from experiment import save_experiment_params
+
 AUTO = tf.data.experimental.AUTOTUNE
 
 if __name__ == '__main__':
@@ -15,6 +17,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dataset', type=str, required=True)
     args = parser.parse_args()
 
+    save_experiment_params(args.output_dataset, args)
 
     images = [str(p) for p in Path(args.dataset).glob('**/*.JPEG')]
     for file_name in tqdm(images):
