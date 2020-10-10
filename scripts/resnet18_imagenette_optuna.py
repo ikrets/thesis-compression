@@ -11,13 +11,14 @@ import optuna
 from datasets.imagenette import pipeline, read_images
 from experiment import save_experiment_params
 from models.utils import LRandWDScheduler
+from models.resnet18 import resnet18_proper
 
 tfk = tf.keras
 AUTO = tf.data.experimental.AUTOTUNE
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, required=True)
-parser.add_argument('--image_size', type=int, default=160)
+parser.add_argument('--image_size', type=int, default=256)
 parser.add_argument('--min_image_size', type=int, nargs=2, default=(300, 300))
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--bn_momentum', type=float, default=0.9)
@@ -49,18 +50,15 @@ def objective(trial):
 
     data_train, train_examples = read_images(Path(args.dataset) / 'train')
     data_test, test_examples = read_images(Path(args.dataset) / 'val')
-    data_train = pipeline(data_train, batch_size=args.batch_size, size=args.image_size, is_training=True,
-                          min_height=args.min_image_size[0],
-                          min_width=args.min_image_size[1])
-    data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False,
-                         min_height=args.min_image_size[0],
-                         min_width=args.min_image_size[1])
+    data_train = pipeline(data_train, batch_size=args.batch_size, size=args.image_size, is_training=True)
+    data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False)
     preprocess_fn = lambda item: (item['X'], item['label'])
     data_train = data_train.map(preprocess_fn, AUTO)
     data_test = data_test.map(preprocess_fn, AUTO)
 
-    model = tf.keras.applications.ResNet50V2(weights=None, pooling='avg', classes=10,
-                                             input_shape=[args.image_size, args.image_size, 3])
+    input = tf.keras.layers.Input([args.image_size, args.image_size, 3])
+    model = resnet18_proper(input)
+    model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
     for layer in model.layers:
         if isinstance(layer, tf.keras.layers.BatchNormalization):
             layer.momentum = args.bn_momentum

@@ -43,4 +43,31 @@ def resnet18(inp):
 
     return tfk.Model(inputs=inp, outputs=out)
 
+def resnet18_proper(inp):
+    def repeat_block(inp, filters, stride, num_blocks):
+        out = inp
+        for i in range(num_blocks):
+            out = block(out, filters, stride=stride if i == 0 else 1)
+
+        return out
+
+    out = tfkl.Conv2D(filters=64, kernel_size=7, padding='same',
+                      strides=2,
+                      use_bias=False)(inp)
+    out = tfkl.BatchNormalization()(out)
+    out = tfkl.ReLU()(out)
+
+    out = tfkl.MaxPool2D(pool_size=3, strides=2)(out)
+    out = repeat_block(out, 64, num_blocks=2, stride=1)
+    out = repeat_block(out, 128, num_blocks=2, stride=2)
+    out = repeat_block(out, 256, num_blocks=2, stride=2)
+    out = repeat_block(out, 512, num_blocks=2, stride=2)
+
+    out = tfkl.AvgPool2D(4)(out)
+    out = tfkl.Flatten()(out)
+    out = tfkl.Dense(10, activation='softmax')(out)
+
+    return tfk.Model(inputs=inp, outputs=out)
+
+
 

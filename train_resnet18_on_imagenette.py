@@ -10,15 +10,14 @@ import coolname
 from datasets.imagenette import pipeline, read_images
 from experiment import save_experiment_params
 from models.utils import LRandWDScheduler
+from models.resnet18 import resnet18_proper
 
 tfk = tf.keras
 AUTO = tf.data.experimental.AUTOTUNE
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, required=True)
-parser.add_argument('--dataset_type', choices=['files', 'compressed_tfrecords'], required=True)
-parser.add_argument('--image_size', type=int, default=160)
-parser.add_argument('--min_image_size', type=int, nargs=2, default=(300, 300))
+parser.add_argument('--image_size', type=int, default=256)
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--bn_momentum', type=float, default=0.9)
 parser.add_argument('--base_lr', type=float, default=0.1)
@@ -38,26 +37,14 @@ if args.fp16:
 
 sess = tf.keras.backend.get_session()
 
-if args.dataset_type == 'files':
-    data_train, train_examples = read_images(Path(args.dataset) / 'train')
-    data_test, test_examples = read_images(Path(args.dataset) / 'val')
-else:
-    assert False
+data_train, train_examples = read_images(Path(args.dataset) / 'train')
+data_test, test_examples = read_images(Path(args.dataset) / 'val')
 
-data_train = pipeline(data_train, batch_size=args.batch_size, size=args.image_size, is_training=True,
-                      min_height=args.min_image_size[0],
-                      min_width=args.min_image_size[1])
-data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False,
-                     min_height=args.min_image_size[0],
-                     min_width=args.min_image_size[1])
+data_train = pipeline(data_train, batch_size=args.batch_size, size=args.image_size, is_training=True)
+data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False)
 
 input = tfk.layers.Input(shape=[args.image_size, args.image_size, 3])
-model = tf.keras.applications.ResNet50V2(weights=None, pooling='avg', classes=10,
-                                         input_shape=[args.image_size, args.image_size, 3])
-for layer in model.layers:
-    if isinstance(layer, tf.keras.layers.BatchNormalization):
-        layer.momentum = args.bn_momentum
-model = tf.keras.models.model_from_json(model.to_json())
+model = resnet18_proper(input)
 model.compile(optimizer=optimizer, loss='categorical_crossentropy', metrics=['categorical_accuracy'])
 
 
