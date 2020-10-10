@@ -43,8 +43,9 @@ def objective(trial):
     base_wd = trial.suggest_loguniform('wd', *args.base_wd_range)
     drop_lr_multiplier = trial.suggest_categorical('drop_lr_multiplier', args.drop_lr_multiplier_choices)
 
-    optimizer = AdamW(lr=base_lr,
-                      weight_decay=base_wd)
+    optimizer_choice = trial.suggest_categorical('optimizer', ['SGDW', 'AdamW'])
+    optimizer_type = SGDW if optimizer_choice == 'SGDW' else AdamW
+    optimizer = optimizer_type(lr=base_lr, weight_decay=base_wd)
 
     if args.fp16:
         optimizer = tf.train.experimental.enable_mixed_precision_graph_rewrite(optimizer)
