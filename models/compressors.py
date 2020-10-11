@@ -180,8 +180,7 @@ class HyperAnalysisTransform(tf.keras.layers.Layer):
         self.num_filters = num_filters
         super(HyperAnalysisTransform, self).__init__(*args, **kwargs)
 
-    def build(self, input_shape):
-        self._layers = [
+        self.layers = [
             tfc.SignalConv2D(
                 self.num_filters, (3, 3), name="layer_0", corr=True, strides_down=1,
                 padding="same_zeros", use_bias=True,
@@ -195,10 +194,9 @@ class HyperAnalysisTransform(tf.keras.layers.Layer):
                 padding="same_zeros", use_bias=False,
                 activation=None),
         ]
-        super(HyperAnalysisTransform, self).build(input_shape)
 
     def call(self, tensor):
-        for layer in self._layers:
+        for layer in self.layers:
             tensor = layer(tensor)
         return tensor
 
@@ -210,8 +208,7 @@ class HyperSynthesisTransform(tf.keras.layers.Layer):
         self.num_filters = num_filters
         super(HyperSynthesisTransform, self).__init__(*args, **kwargs)
 
-    def build(self, input_shape):
-        self._layers = [
+        self.layers = [
             tfc.SignalConv2D(
                 self.num_filters, (5, 5), name="layer_0", corr=False, strides_up=2,
                 padding="same_zeros", use_bias=True, kernel_parameterizer=None,
@@ -225,10 +222,9 @@ class HyperSynthesisTransform(tf.keras.layers.Layer):
                 padding="same_zeros", use_bias=True, kernel_parameterizer=None,
                 activation=None),
         ]
-        super(HyperSynthesisTransform, self).build(input_shape)
 
     def call(self, tensor):
-        for layer in self._layers:
+        for layer in self.layers:
             tensor = layer(tensor)
         return tensor
 

@@ -47,9 +47,9 @@ def prepare_dataset(args) -> datasets.DatasetSetup:
             data_train, train_examples = datasets.imagenette.read_images(dataset / 'train')
             data_test, val_examples = datasets.imagenette.read_images(dataset / 'val')
 
-            train_dataset = datasets.imagenette.pipeline(data_train, batch_size=args.batchsize, size=args.image_size,
+            train_dataset = datasets.imagenette.pipeline(data_train, batch_size=args.batchsize,
                                                          is_training=True)
-            val_dataset = datasets.imagenette.pipeline(data_test, batch_size=args.batchsize, size=args.image_size,
+            val_dataset = datasets.imagenette.pipeline(data_test, batch_size=args.batchsize,
                                                        is_training=False)
             classifier_normalize_fn = datasets.imagenette.normalize
         else:
