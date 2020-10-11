@@ -8,7 +8,7 @@ import tensorflow.keras.backend as K
 import coolname
 import optuna
 
-from datasets.imagenette import pipeline, read_images
+from datasets.imagenette import pipeline, read_images, normalize
 from experiment import save_experiment_params
 from models.utils import LRandWDScheduler
 from models.resnet18 import resnet18_proper
@@ -56,7 +56,7 @@ def objective(trial):
                           cache=args.cache)
     data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False,
                          cache=args.cache)
-    preprocess_fn = lambda item: (item['X'], item['label'])
+    preprocess_fn = lambda item: (normalize(item['X']), item['label'])
     data_train = data_train.map(preprocess_fn, AUTO)
     data_test = data_test.map(preprocess_fn, AUTO)
 

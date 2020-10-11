@@ -21,11 +21,13 @@ def preprocess_img(image_bytes, size, is_training):
                     true_fn=lambda: tf.image.grayscale_to_rgb(image),
                     false_fn=lambda: image)
     image = tf.cast(image, tf.float32) / 255
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-    image = (image - mean) / std
 
     return image
+
+def normalize(image):
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+    return (image - mean) / std
 
 
 def read_images(dir: Union[str, Path], extension='png') -> Tuple[tf.data.Dataset, int]:

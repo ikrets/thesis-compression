@@ -1,6 +1,6 @@
 import dataclasses
 import tensorflow as tf
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Callable
 
 
 @dataclasses.dataclass
@@ -12,6 +12,8 @@ class DatasetSetup:
     val_dataset: tf.data.Dataset
     val_examples: int
     val_steps: int
+
+    classifier_normalize_fn: Callable[[tf.Tensor], tf.Tensor]
 
 
 def get_mse(item: tf.Tensor, uncompressed_data_dir: str):

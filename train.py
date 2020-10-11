@@ -41,18 +41,19 @@ def prepare_dataset(args) -> datasets.DatasetSetup:
                                                     batch_size=args.eval_batchsize,
                                                     classifier_normalize=False,
                                                     gradcam_dir=args.gradcam_heatmaps)
+            classifier_normalize_fn = lambda X: datasets.cifar10.normalize(X if not args.correct_bgr else X[..., ::-1])
+
         elif args.dataset_type == 'imagenette':
             data_train, train_examples = datasets.imagenette.read_images(dataset / 'train')
             data_test, val_examples = datasets.imagenette.read_images(dataset / 'val')
 
             train_dataset = datasets.imagenette.pipeline(data_train, batch_size=args.batchsize, size=args.image_size,
-                                                         is_training=True,
-                                                         min_height=args.min_image_size,
-                                                         min_width=args.min_image_size)
+                                                         is_training=True)
             val_dataset = datasets.imagenette.pipeline(data_test, batch_size=args.batchsize, size=args.image_size,
-                                                       is_training=False,
-                                                       min_height=args.min_image_size,
-                                                       min_width=args.min_image_size)
+                                                       is_training=False)
+            classifier_normalize_fn = datasets.imagenette.normalize
+        else:
+            assert False
 
     train_steps = math.ceil(train_examples / args.batchsize)
     val_steps = math.ceil(val_examples / args.eval_batchsize)
@@ -63,7 +64,8 @@ def prepare_dataset(args) -> datasets.DatasetSetup:
         train_steps=train_steps,
         val_dataset=val_dataset,
         val_examples=val_examples,
-        val_steps=val_steps
+        val_steps=val_steps,
+        classifier_normalize_fn=classifier_normalize_fn
     )
 
 
@@ -97,19 +99,14 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
     else:
         assert False
 
-    if not args.pretrained_model:
-        downstream_model = tf.keras.models.load_model(args.downstream_model)
-        if args.downstream_model_weights:
-            downstream_model.load_weights(args.downstream_model_weights)
-        preprocess_fn = lambda X: datasets.cifar10.normalize(X if not args.correct_bgr else X[..., ::-1])
-    else:
-        downstream_model = tf.keras.applications.ResNet50()
-        preprocess_fn = lambda X: tf.keras.applications.resnet50.preprocess_input(X * 255)
+    downstream_model = tf.keras.models.load_model(args.downstream_model)
+    if args.downstream_model_weights:
+        downstream_model.load_weights(args.downstream_model_weights)
 
     if args.downstream_loss == 'perceptual':
         downstream_loss = models.downstream_losses.PerceptualLoss(
             model=downstream_model,
-            preprocess_fn=preprocess_fn,
+            preprocess_fn=dataset_setup.classifier_normalize_fn,
             metric_fn=tf.keras.metrics.categorical_accuracy,
             readout_layers=args.perceptual_loss_readouts,
             normalize_activations=args.perceptual_loss_normalize_activations,
@@ -117,15 +114,15 @@ def run_fixed_parameters(args: argparse.Namespace) -> None:
         )
     elif args.downstream_loss == 'prediction_crossentropy':
         downstream_loss = models.downstream_losses.PredictionCrossEntropy(model=downstream_model,
-                                                                          preprocess_fn=preprocess_fn,
+                                                                          preprocess_fn=dataset_setup.classifier_normalize_fn,
                                                                           metric_fn=tf.keras.metrics.categorical_accuracy)
     elif args.downstream_loss == 'task_crossentropy':
         downstream_loss = models.downstream_losses.TaskCrossEntropy(model=downstream_model,
-                                                                    preprocess_fn=preprocess_fn,
+                                                                    preprocess_fn=dataset_setup.classifier_normalize_fn,
                                                                     metric_fn=tf.keras.metrics.categorical_accuracy)
     elif args.downstream_loss == 'gradcam':
         downstream_loss = models.downstream_losses.Gradcam(model=downstream_model,
-                                                           preprocess_fn=preprocess_fn,
+                                                           preprocess_fn=dataset_setup.classifier_normalize_fn,
                                                            metric_fn=tf.keras.metrics.categorical_accuracy)
     else:
         assert False
@@ -210,9 +207,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--compressor', choices=['simple', 'hyperprior'], default='simple')
 
-    parser.add_argument('--downstream_model', type=str)
+    parser.add_argument('--downstream_model', type=str, required=True)
     parser.add_argument('--downstream_model_weights', type=str)
-    parser.add_argument('--pretrained_model', action='store_true')
 
     parser.add_argument('--experiment_dir', type=str, required=True)
 
