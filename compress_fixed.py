@@ -11,7 +11,7 @@ from queue import Queue
 from typing import Dict, Tuple, Union
 
 import datasets
-from models.compressors import SimpleFiLMCompressor
+from models.compressors import SimpleFiLMCompressor, HyperpriorCompressor
 from experiment import save_experiment_params
 
 AUTO = tf.data.experimental.AUTOTUNE
@@ -23,6 +23,7 @@ parser.add_argument('--experiment', type=str)
 
 parser.add_argument('--data_to_compress', type=str, required=True)
 parser.add_argument('--output_dir', type=str, required=True)
+parser.add_argument('--dataset_type', choices=['cifar10', 'imagenette'], default='cifar10')
 
 args = parser.parse_args()
 
@@ -32,10 +33,10 @@ save_experiment_params(args.output_dir, args)
 files = [str(f) for f in Path(args.data_to_compress).glob('**/*.png')]
 
 
-def read_and_preprocess_cifar10(fname):
+def read_and_preprocess(fname, image_shape):
     img_string = tf.io.read_file(fname)
     img = tf.io.decode_png(img_string)
-    img = tf.reshape(img, shape=[32, 32, 3])
+    img = tf.reshape(img, shape=image_shape)
     img = tf.cast(img, dtype=tf.float32) / 255.
 
     return img
@@ -66,6 +67,7 @@ def writer_fn(queue: Queue) -> None:
 
     writer.close()
 
+image_shape = [32, 32, 3] if args.dataset_type == 'cifar10' else [256, 256, 3]
 
 experiment = Path(args.experiment)
 results_queue: 'Queue[Union[Tuple[np.array, np.array, np.array, str, float, float], None]]' = Queue(maxsize=20)
@@ -74,7 +76,7 @@ writer_thread.start()
 
 input_data = tf.data.Dataset.from_tensor_slices(files)
 input_data = input_data.map(
-    lambda fname: {'X': read_and_preprocess_cifar10(fname),
+    lambda fname: {'X': read_and_preprocess(fname, image_shape),
                    'name': fname},
     AUTO)
 
@@ -83,13 +85,19 @@ input_data = input_data.batch(args.batchsize).repeat().prefetch(AUTO)
 with (experiment / 'parameters.json').open('r') as fp:
     parameters = json.load(fp)
 
-model = SimpleFiLMCompressor(num_filters=parameters['num_filters'],
-                             depth=parameters['depth'],
-                             num_postproc=0,
-                             FiLM_width=0,
-                             FiLM_depth=0,
-                             FiLM_activation=None)
-model.forward(item={'X': np.zeros((128, 32, 32, 3)).astype(np.float32),
+if args.dataset_type == 'cifar10':
+    model = SimpleFiLMCompressor(num_filters=parameters['num_filters'],
+                                 depth=parameters['depth'],
+                                 num_postproc=0,
+                                 FiLM_width=0,
+                                 FiLM_depth=0,
+                                 FiLM_activation=None)
+elif args.dataset_type == 'imagenette':
+    model = HyperpriorCompressor(num_filters=parameters['num_filters'])
+else:
+    assert False
+
+model.forward(item={'X': np.zeros((128, *image_shape)).astype(np.float32),
                     'alpha': np.zeros(128).astype(np.float32),
                     'lambda': np.zeros(128).astype(np.float32)},
               training=False)

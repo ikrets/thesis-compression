@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 import json
 from pathlib import Path
 from typing import Union, Tuple, Optional
@@ -15,7 +16,7 @@ def path_to_files_labels(path, extension):
     return files, labels
 
 
-def preprocess_img(image_bytes, size, is_training):
+def preprocess_img(image_bytes):
     image = tf.image.decode_jpeg(image_bytes)
     image = tf.cond(tf.equal(tf.shape(image)[-1], 1),
                     true_fn=lambda: tf.image.grayscale_to_rgb(image),
@@ -34,12 +35,20 @@ def read_images(dir: Union[str, Path], extension='png') -> Tuple[tf.data.Dataset
     files, labels = path_to_files_labels(Path(dir), extension)
     dataset = tf.data.Dataset.zip((tf.data.Dataset.from_tensor_slices(files),
                                    tf.data.Dataset.from_tensor_slices(labels)))
-    dataset = dataset.map(lambda X_fname, Y: (tf.io.read_file(X_fname), Y))
+
+    def make_relative(fname):
+        parts = tf.strings.split([fname], '/')
+        return tf.strings.reduce_join(parts.values[-3:], separator='/')
+
+    dataset = dataset.map(lambda fname, Y: {'X': tf.io.read_file(fname),
+                                            'name': make_relative(fname),
+                                            'label': Y})
 
     return dataset, len(files)
 
 
-def augment(image, Y, size):
+def augment(image, Y):
+    size = tf.shape(image)[1]
     image = tf.image.pad_to_bounding_box(image, size // 8, size // 8,
                                          size + size // 8, size + size // 8)
     image = tf.image.random_crop(image, size=[size, size, 3])
@@ -54,11 +63,11 @@ def imagenette_to_imagenet_mapping():
     return {v[0]: int(k) for k, v in class_index.items()}
 
 
-def pipeline(dataset, batch_size, size, is_training,
+def pipeline(dataset, batch_size, is_training,
              cache=False,
              repeat=True):
-    def preprocess_fn(X, Y):
-        return preprocess_img(X, size=size, is_training=is_training), tf.one_hot(Y, depth=10)
+    def preprocess_fn(item):
+        return preprocess_img(item['X']), tf.one_hot(item['label'], depth=10)
 
     # if not caching, shuffle the filenames
     if not cache and is_training:
@@ -72,10 +81,7 @@ def pipeline(dataset, batch_size, size, is_training,
         dataset = dataset.shuffle(10000)
 
     if is_training:
-        def augment_fn(image, Y):
-            return augment(image, Y, size)
-
-        dataset = dataset.map(augment_fn, AUTO)
+        dataset = dataset.map(augment, AUTO)
 
     dataset = dataset.map(lambda X, Y: {'X': X, 'label': Y}, AUTO)
     dataset = dataset.batch(batch_size)
@@ -84,3 +90,22 @@ def pipeline(dataset, batch_size, size, is_training,
         dataset = dataset.repeat()
 
     return dataset
+
+def count_bpg_bpps(dir: Union[str, Path]) -> float:
+    def read_bpg_and_png(fname):
+        bpg_string = tf.io.read_file(fname)
+        png_string = tf.io.read_file(tf.strings.regex_replace(fname, '.bpg$', '.png'))
+        return bpg_string, png_string
+
+    files = tf.data.Dataset.list_files(f'{dir}/*/*.bpg')
+    file_count = files.reduce(np.float64(0.), lambda acc, _: acc + 1.)
+    images = files.map(read_bpg_and_png)
+
+    def reduce_bpp(acc, item):
+        bpg_string, png_string = item
+        img = tf.image.decode_png(png_string)
+        image_bpp = tf.cast(tf.strings.length(bpg_string), tf.float64) * np.float64(8)
+        image_bpp /= tf.cast(tf.shape(img)[0] * tf.shape(img)[1], tf.float64)
+        return acc + image_bpp / file_count
+
+    return images.reduce(np.float64(0.), reduce_bpp)

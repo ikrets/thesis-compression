@@ -21,6 +21,7 @@ sns.set(context='paper')
 o2o_values = {architecture: float(value) for architecture, value in args.o2o_accuracy}
 
 combined_df = pd.read_csv(args.combined_csv)
+combined_df = combined_df[combined_df.dataset == 'cifar10']
 # do not count the header for bpg bitrates
 combined_df.loc[combined_df.compressor == 'bpg', ['bpp_1', 'bpp_2']] -= 13 * 8 / 32 / 32
 combined_df.sort_values(['bpp_1', 'bpp_2', 'architecture_O', 'architecture_C'])

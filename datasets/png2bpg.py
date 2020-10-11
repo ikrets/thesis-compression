@@ -2,6 +2,7 @@ import argparse
 import subprocess
 from pathlib import Path
 from tqdm import tqdm
+from shlex import split
 from typing import Dict, Tuple, List
 
 parser = argparse.ArgumentParser()
@@ -23,5 +24,5 @@ for img_name in tqdm(dataset):
             Path(img_name.replace(args.dataset, target_dir(qp, cfmt))).parent.mkdir(parents=True, exist_ok=True)
             target_name = img_name.replace('.png', '.bpg').replace(args.dataset,
                                                                    target_dir(qp, cfmt))
-            subprocess.run(f'bpgenc -q {qp} -f {cfmt} -o {target_name} {img_name}', shell=True)
-            subprocess.run(f'bpgdec -o {target_name.replace(".bpg", ".png")} {target_name}', shell=True)
+            subprocess.Popen(split(f'bpgenc -q {qp} -f {cfmt} -o {target_name} {img_name}'))
+            subprocess.Popen(split(f'bpgdec -o {target_name.replace(".bpg", ".png")} {target_name}'))
