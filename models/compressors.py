@@ -244,10 +244,9 @@ class SimpleFiLMCompressor(tfk.Model):
         self.entropy_bottleneck = tfc.EntropyBottleneck()
 
     def forward(self, item, training):
-        parameters = tf.stack([item['alpha'], item['lambda']], axis=-1)
-        Y = self.analysis_transform([parameters, item['X']])
+        Y = self.analysis_transform([0, item['X']])
         Y_tilde, Y_likelihoods = self.entropy_bottleneck(Y, training=training)
-        X_tilde = self.synthesis_transform([parameters, Y_tilde])
+        X_tilde = self.synthesis_transform([0, Y_tilde])
 
         results = {'Y': Y,
                    'Y_tilde': Y_tilde,
@@ -257,12 +256,11 @@ class SimpleFiLMCompressor(tfk.Model):
         return results
 
     def forward_with_range_coding(self, item):
-        parameters = tf.stack([item['alpha'], item['lambda']], axis=-1)
-        Y = self.analysis_transform([parameters, item['X']])
+        Y = self.analysis_transform([0, item['X']])
         Y_range_coded = self.entropy_bottleneck.compress(Y)
         Y_decoded = self.entropy_bottleneck.decompress(Y_range_coded, shape=tf.shape(Y)[1:3],
                                                        channels=tf.shape(Y)[3])
-        X_reconstructed = self.synthesis_transform([parameters, Y_decoded])
+        X_reconstructed = self.synthesis_transform([0, Y_decoded])
         height = tf.shape(item['X'])[1]
         width = tf.shape(item['X'])[2]
         range_coded_bpp = tf.strings.length(Y_range_coded) * 8 / (height * width)
@@ -315,18 +313,17 @@ class HyperpriorCompressor(tfk.Model):
         sigma = self.hyper_synthesis_transform(Z_hat)
         sigma = sigma[:, :Y_shape[1], :Y_shape[2], :]
         scale_table = np.exp(np.linspace(np.log(self.SCALES_MIN), np.log(self.SCALES_MAX), self.SCALES_LEVELS))
-        conditional_bottleneck = tfc.GaussianConditional(sigma, scale_table)
+        conditional_bottleneck = tfc.GaussianConditional(sigma, scale_table, dtype=tf.float32)
         Z_coded = self.entropy_bottleneck.compress(Z)
         Y_coded = conditional_bottleneck.compress(Y)
 
         height = tf.shape(item['X'])[1]
         width = tf.shape(item['X'])[2]
-        coded_bpp = (tf.strings.length(Z_coded) + tf.strings.length(Y_coded)) * 8 / height / width
+        coded_bpp = (tf.strings.length(Z_coded) + tf.strings.length(Y_coded)) * 8 / (height * width)
 
-        Z_hat = self.entropy_bottleneck.decompress(Z_coded, tf.shape(Z), channels=self.num_filters)
+        Z_hat = self.entropy_bottleneck.decompress(Z_coded, tf.shape(Z)[1:3], channels=tf.shape(Y)[3])
         sigma = self.hyper_synthesis_transform(Z_hat)
         sigma = sigma[:, :Y_shape[1], :Y_shape[2], :]
-        conditional_bottleneck = tfc.GaussianConditional(sigma, scale_table, dtype=tf.float32)
         Y_hat = conditional_bottleneck.decompress(Y_coded)
         X_hat = self.synthesis_transform([0, Y_hat])
 

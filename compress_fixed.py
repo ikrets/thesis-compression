@@ -36,6 +36,10 @@ files = [str(f) for f in Path(args.data_to_compress).glob('**/*.png')]
 def read_and_preprocess(fname, image_shape):
     img_string = tf.io.read_file(fname)
     img = tf.io.decode_png(img_string)
+    img = tf.cond(tf.equal(tf.shape(img)[-1], 1),
+                  true_fn=lambda: tf.image.grayscale_to_rgb(img),
+                  false_fn=lambda: img)
+
     img = tf.reshape(img, shape=image_shape)
     img = tf.cast(img, dtype=tf.float32) / 255.
 
@@ -55,7 +59,8 @@ def writer_fn(queue: Queue) -> None:
         name_result, range_coded_bpp_result, X_reconstructed_result, experiment_name, alpha, lmbda = item
         for name, range_coded_bpp, reconstructed_img in zip(name_result, range_coded_bpp_result,
                                                             X_reconstructed_result):
-            name_parts = Path(name.decode('ascii')).parts[-4:]
+            first_part = -4 if args.dataset_type == 'cifar10' else -3
+            name_parts = Path(name.decode('ascii')).parts[first_part:]
 
             _, reconstructed_img_string = cv2.imencode('.png', reconstructed_img[..., ::-1])
             example = datasets.serialize_example(name='/'.join(name_parts),
@@ -66,6 +71,7 @@ def writer_fn(queue: Queue) -> None:
             writer.write(example)
 
     writer.close()
+
 
 image_shape = [32, 32, 3] if args.dataset_type == 'cifar10' else [256, 256, 3]
 
@@ -85,28 +91,15 @@ input_data = input_data.batch(args.batchsize).repeat().prefetch(AUTO)
 with (experiment / 'parameters.json').open('r') as fp:
     parameters = json.load(fp)
 
-if args.dataset_type == 'cifar10':
+if 'compressor' not in parameters or parameters['compressor'] == 'simple':
     model = SimpleFiLMCompressor(num_filters=parameters['num_filters'],
                                  depth=parameters['depth'],
                                  num_postproc=0,
                                  FiLM_width=0,
                                  FiLM_depth=0,
                                  FiLM_activation=None)
-elif args.dataset_type == 'imagenette':
-    model = HyperpriorCompressor(num_filters=parameters['num_filters'])
 else:
-    assert False
-
-model.forward(item={'X': np.zeros((128, *image_shape)).astype(np.float32),
-                    'alpha': np.zeros(128).astype(np.float32),
-                    'lambda': np.zeros(128).astype(np.float32)},
-              training=False)
-
-weights = list(experiment.glob('compressor_epoch_*_weights.h5'))
-matches = [re.search('compressor_epoch_([0-9]+)_weights.h5', str(f)) for f in weights]
-epochs = [int(m.group(1)) for m in matches if m]
-print(f'Loading weights from epoch {max(epochs)}')
-model.load_weights(str(weights[max(range(len(epochs)), key=lambda x: epochs[x])]))
+    model = HyperpriorCompressor(num_filters=parameters['num_filters'])
 
 sess = tf.keras.backend.get_session()
 item = input_data.make_one_shot_iterator().get_next()
@@ -119,6 +112,13 @@ item_with_params = {'X': item['X'],
                     'alpha': alphas,
                     'lambda': lambdas}
 batch = model.forward_with_range_coding(item_with_params)
+
+weights = list(experiment.glob('compressor_epoch_*_weights.h5'))
+matches = [re.search('compressor_epoch_([0-9]+)_weights.h5', str(f)) for f in weights]
+epochs = [int(m.group(1)) for m in matches if m]
+print(f'Loading weights from epoch {max(epochs)}')
+model.load_weights(str(weights[max(range(len(epochs)), key=lambda x: epochs[x])]))
+
 parameters_stacked = tf.stack([alphas, lambdas], axis=-1)
 X_reconstructed = tf.cast(tf.clip_by_value(batch['X_reconstructed'], 0, 1) * 255, tf.uint8)
 

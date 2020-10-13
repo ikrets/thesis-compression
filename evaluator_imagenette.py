@@ -28,10 +28,26 @@ sess = tf.keras.backend.get_session()
 
 def load_compressed_dataset(dataset: str, dataset_type: str):
     if dataset_type == 'tfrecords':
-        # _, C_data = datasets.imagenette.read_compressed_tfrecords([dataset])
-        # num_examples = sess.run(C_data.reduce(np.int32(0), lambda acc, _: acc + 1))
-        # bpp = sess.run(C_data.reduce(np.float32(0.), lambda acc, item: acc + item['range_coded_bpp']) / num_examples)
-        assert False
+        _, C_data = datasets.imagenette.read_compressed_tfrecords([dataset])
+        num_examples = sess.run(C_data.reduce(np.int32(0), lambda acc, _: acc + 1))
+        bpp = sess.run(C_data.reduce(np.float32(0.), lambda acc, item: acc + item['range_coded_bpp']) / num_examples)
+        class_to_label_map = datasets.imagenette.get_class_to_label_map(args.uncompressed_dataset)
+
+        def name_to_label(name):
+            result = tf.py_func(lambda n: class_to_label_map[n.decode('ascii').split('/')[-2]],
+                                [name],
+                                tf.int64)
+            result.set_shape(tuple())
+            return result
+
+        def add_label(item, label):
+            item['label'] = label
+            return item
+
+        C_data_labels = C_data.map(lambda item: name_to_label(item['name']), AUTO)
+        C_data = tf.data.Dataset.zip((C_data, C_data_labels))
+        C_data = C_data.map(add_label, AUTO)
+
     elif dataset_type == 'files':
         C_data, _ = datasets.imagenette.read_images(Path(dataset) / 'val')
         num_examples = sess.run(C_data.reduce(np.int32(0), lambda acc, _: acc + 1))
@@ -48,14 +64,6 @@ def load_compressed_dataset(dataset: str, dataset_type: str):
 
 
 compressed_dataset_2 = load_compressed_dataset(args.compressed_dataset_2, args.compressed_dataset_2_type)
-
-O_data, _ = datasets.imagenette.read_images(Path(args.uncompressed_dataset) / 'val')
-C2O_data = datasets.imagenette.pipeline(O_data,
-                                        batch_size=args.batch_size,
-                                        is_training=False,
-                                        repeat=False)
-C2O_data = C2O_data.map(datasets.dict_to_tuple, AUTO)
-C2O_data = C2O_data.map(lambda img, label: (datasets.imagenette.normalize(img), label), AUTO)
 
 downstream_O_model = tf.keras.models.load_model(args.downstream_O_model, compile=False)
 downstream_O_model.compile('sgd', loss='categorical_crossentropy', metrics=['categorical_accuracy'])

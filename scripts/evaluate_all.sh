@@ -2,6 +2,7 @@
 
 EXPERIMENT_DIR=$HOME/thesis-compression-s3/experiments
 BPG_DATASETS=$HOME/thesis-compression-data/datasets/cifar-10-bpg
+DATASETS=$HOME/thesis-compression-s3/datasets
 EVALUATION_DIR=$HOME/thesis-compression-s3/evaluation
 
 export TF_CPP_MIN_LOG_LEVEL=2
@@ -175,4 +176,52 @@ for resnet_c in $EXPERIMENT_DIR/cifar10_resnet18/*/*/; do
     --skip_C2C \
     --downstream_C_model "$resnet_c/C_model/final_model.hdf5" \
     --output_dir "$output_dir"
+done
+
+# imagenette BPG O2C
+for bpg_dataset in $DATASETS/imagenette2_filtered_bpg/*/; do
+  output_dir="$EVALUATION_DIR/imagenette_r18/bpg/$(basename $bpg_dataset)"
+  echo "Processing $output_dir."
+  echo $bpg_dataset
+
+  if [ -f $output_dir/results.csv ]; then
+    echo "Skipping: results.csv exists."
+    continue
+  fi
+
+  python evaluator_imagenette.py --batch_size 128 \
+    --uncompressed_dataset data/datasets/imagenette2_filtered \
+    --downstream_O_model $EXPERIMENT_DIR/imagenette_classifiers/imagenette2_filtered/final_model.hdf5 \
+    --compressed_dataset_2 $bpg_dataset \
+    --compressed_dataset_2_type files \
+    --output_dir $output_dir
+done
+
+# imagenette activation7 with two different compressors
+for compressor_type in imagenette_r18 imagenette_r18_hyperprior; do
+  for imagenette_compressor in $EXPERIMENT_DIR/$compressor_type/activation_7/*/; do
+    alpha=$(basename $imagenette_compressor)
+    output_dir="$EVALUATION_DIR/$compressor_type/activation_7/$alpha"
+    echo "Processing $output_dir."
+
+    if [ -f "$output_dir/results.csv" ]; then
+      echo "Skipping: results.csv exists."
+      continue
+    fi
+
+    if [ ! -f $imagenette_compressor/compressed_imagenette/compressed.tfrecord ]; then
+      python compress_fixed.py --batchsize 32 \
+        --experiment $imagenette_compressor \
+        --data_to_compress $DATASETS/imagenette2_filtered \
+        --dataset_type imagenette \
+        --output_dir $imagenette_compressor/compressed_imagenette
+    fi
+
+    python evaluator_imagenette.py --batch_size 32 \
+      --uncompressed_dataset $DATASETS/imagenette2_filtered \
+      --downstream_O_model $EXPERIMENT_DIR/imagenette_classifiers/imagenette2_filtered/final_model.hdf5 \
+      --compressed_dataset_2 $imagenette_compressor/compressed_imagenette/compressed.tfrecord \
+      --compressed_dataset_2_type tfrecords \
+      --output_dir $output_dir
+  done
 done

@@ -2,7 +2,9 @@ import tensorflow as tf
 import numpy as np
 import json
 from pathlib import Path
-from typing import Union, Tuple, Optional
+from typing import Union, Tuple, Sequence
+
+import datasets
 
 AUTO = tf.data.experimental.AUTOTUNE
 
@@ -14,6 +16,11 @@ def path_to_files_labels(path, extension):
     files = [str(f) for f in files]
 
     return files, labels
+
+def get_class_to_label_map(file_dataset_path):
+    file_dataset_path = Path(file_dataset_path) / 'train'
+    return {l[1].name: l[0] for l in enumerate(sorted(file_dataset_path.glob('*/')))}
+
 
 
 def preprocess_img(image_bytes):
@@ -45,6 +52,15 @@ def read_images(dir: Union[str, Path], extension='png') -> Tuple[tf.data.Dataset
                                             'label': Y})
 
     return dataset, len(files)
+
+def read_compressed_tfrecords(files: Sequence[Union[str, Path]]) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
+    dataset = tf.data.TFRecordDataset([str(f) for f in files])
+
+    dataset = dataset.map(datasets.deserialize_example, AUTO)
+    train_dataset = dataset.filter(lambda item: tf.strings.regex_full_match(item['name'], '.*train.*'))
+    test_dataset = dataset.filter(lambda item: tf.strings.regex_full_match(item['name'], '.*val.*'))
+
+    return train_dataset, test_dataset
 
 
 def augment(image, Y):
