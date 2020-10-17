@@ -15,12 +15,14 @@ parser.add_argument('--original_dataset', type=str, required=True)
 parser.add_argument('--original_model', type=str, required=True)
 parser.add_argument('--original_model_readout', type=str, required=True)
 parser.add_argument('--batch_size', type=int, default=32)
-parser.add_argument('--image_names', type=str, action='append', required=True)
+parser.add_argument('--image_names', type=str, nargs='+', required=True)
 parser.add_argument('--compressed_datasets', type=str, required=True)
 parser.add_argument('--bpg_datasets', type=str, required=True)
 parser.add_argument('--output_dir', type=str, required=True)
 args = parser.parse_args()
 
+output_dir = Path(args.output_dir)
+output_dir.mkdir(parents=True, exist_ok=True)
 save_experiment_params(args.output_dir, args)
 
 model = tf.keras.models.load_model(args.original_model)
@@ -28,7 +30,6 @@ output = model.get_layer(args.original_model_readout).output
 readout_model = tf.keras.Model(inputs=model.input, outputs=output)
 
 image_names = set(args.image_names)
-output_dir = Path(args.output_dir)
 original_dataset = Path(args.original_dataset)
 
 compressed_datasets = Path(args.compressed_datasets).glob('**/compressed.tfrecord')
@@ -104,7 +105,7 @@ for image_name in image_names:
 
 
     def write_mse(reconstruction_img, name):
-        mse_img = tf.reduce_mean(tf.math.squared_difference(reconstruction_img, original_img), axis=-1, keepdims=True)
+        mse_img = tf.reduce_max(tf.math.squared_difference(reconstruction_img, original_img), axis=-1, keepdims=True)
         mse_img = tf.saturate_cast(mse_img * 2 ** 16, tf.uint16)
         mse_img_name = tf.strings.regex_replace(name, '.png', '.mse.png')
         tf.io.write_file(mse_img_name, tf.image.encode_png(mse_img))
@@ -119,7 +120,7 @@ for image_name in image_names:
     reconstructions = reconstructions.map(write_mse, AUTO)
     reconstructions.reduce(np.int32(0), lambda acc, item: 0)
 
-    prediction_extension = '_{}.png'.format(args.original_model_readout)
+    prediction_extension = '_{}.mse.png'.format(args.original_model_readout)
 
 
     def write_layer_mse(prediction, name):
