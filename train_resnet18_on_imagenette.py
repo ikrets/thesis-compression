@@ -7,7 +7,7 @@ from weight_decay_optimizers import AdamW
 import tensorflow.keras.backend as K
 import coolname
 
-from datasets.imagenette import pipeline, read_images
+from datasets.imagenette import pipeline, read_images, normalize
 from experiment import save_experiment_params
 from models.utils import LRandWDScheduler
 from models.resnet18 import resnet18_proper
@@ -71,9 +71,9 @@ save_experiment_params(experiment_path, args)
 model.save(experiment_path / 'model.hdf5',
            include_optimizer=False)
 
-flatten = lambda item: (item['X'], item['label'])
-data_train = data_train.map(flatten, AUTO)
-data_test = data_test.map(flatten, AUTO)
+flatten_and_normalize = lambda item: (normalize(item['X']), item['label'])
+data_train = data_train.map(flatten_and_normalize, AUTO)
+data_test = data_test.map(flatten_and_normalize, AUTO)
 
 model.fit(data_train.prefetch(AUTO),
           epochs=args.epochs,
