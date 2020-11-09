@@ -17,6 +17,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dataset', type=str, required=True)
     args = parser.parse_args()
 
+    Path(args.output_dataset).mkdir(parents=True, exist_ok=True)
     save_experiment_params(args.output_dataset, args)
 
     images = [str(p) for p in Path(args.dataset).glob('**/*.JPEG')]
@@ -31,5 +32,8 @@ if __name__ == '__main__':
         image = image[h_start:h_start + min_side, w_start:w_start + min_side]
         image = Image.fromarray(image).resize((args.image_size, args.image_size), Image.BICUBIC)
         new_file_name = file_name.replace(args.dataset, args.output_dataset).replace('.JPEG', '.png')
+        new_file_name = Path(new_file_name)
+        new_file_name.parent.mkdir(parents=True, exist_ok=True)
+
         with open(new_file_name, 'wb') as fp:
             image.save(fp, format='png')

@@ -41,8 +41,8 @@ sess = tf.keras.backend.get_session()
 data_train, train_examples = read_images(Path(args.dataset) / 'train')
 data_test, test_examples = read_images(Path(args.dataset) / 'val')
 
-data_train = pipeline(data_train, batch_size=args.batch_size, size=args.image_size, is_training=True, cache=args.cache)
-data_test = pipeline(data_test, batch_size=args.batch_size, size=args.image_size, is_training=False, cache=args.cache)
+data_train = pipeline(data_train, batch_size=args.batch_size, is_training=True, cache=args.cache)
+data_test = pipeline(data_test, batch_size=args.batch_size, is_training=False, cache=args.cache)
 
 input = tfk.layers.Input(shape=[args.image_size, args.image_size, 3])
 model = resnet18_proper(input)
