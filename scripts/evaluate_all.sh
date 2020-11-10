@@ -1,9 +1,10 @@
 #!/bin/bash
 
-EXPERIMENT_DIR=$HOME/thesis-compression-s3/experiments
+S3_DIR=/media/ilya/TOSHIBAEXT/thesis-compression-s3
+EXPERIMENT_DIR="$S3_DIR/experiments"
 BPG_DATASETS=$HOME/thesis-compression-data/datasets/cifar-10-bpg
-DATASETS=$HOME/thesis-compression-s3/datasets
-EVALUATION_DIR=$HOME/thesis-compression-s3/evaluation
+DATASETS="$S3_DIR/datasets"
+EVALUATION_DIR=$S3_DIR/evaluation
 
 export TF_CPP_MIN_LOG_LEVEL=2
 
@@ -12,7 +13,7 @@ for bpg_c_model in $EXPERIMENT_DIR/cifar10_vgg16/bpg/*/; do
   output_dir="$EVALUATION_DIR/cifar10_vgg16/bpg/$(basename $bpg_c_model)"
   echo "Processing $output_dir."
 
-  if [ -f $output_dir/results.csv ]; then
+  if [ -f "$output_dir/results.csv" ]; then
     echo "Skipping: results.csv exists."
     continue
   fi
@@ -198,10 +199,10 @@ for bpg_dataset in $DATASETS/imagenette2_filtered_bpg/*/; do
 done
 
 # imagenette activation7 with two different compressors
-for compressor_type in imagenette_r18 imagenette_r18_hyperprior; do
-  for imagenette_compressor in $EXPERIMENT_DIR/$compressor_type/activation_7/*/; do
+for compressor_type in activation_7 activation_7_hyperprior; do
+  for imagenette_compressor in $EXPERIMENT_DIR/imagenette_r18_saveme/$compressor_type/*/; do
     alpha=$(basename $imagenette_compressor)
-    output_dir="$EVALUATION_DIR/$compressor_type/activation_7/$alpha"
+    output_dir="$EVALUATION_DIR/imagenette_r18/$compressor_type/$alpha"
     echo "Processing $output_dir."
 
     if [ -f "$output_dir/results.csv" ]; then
@@ -225,3 +226,50 @@ for compressor_type in imagenette_r18 imagenette_r18_hyperprior; do
       --output_dir $output_dir
   done
 done
+
+# imagewoof activation7
+for compressor in $EXPERIMENT_DIR/imagewoof_r18/activation_7_hyperprior/*/; do
+  alpha=$(basename $compressor)
+  output_dir="$EVALUATION_DIR/imagewoof_r18/activation_7_hyperprior/$alpha"
+  echo "Processing $output_dir."
+
+  if [ -f "$output_dir/results.csv" ]; then
+    echo "Skipping: results.csv exists."
+    continue
+  fi
+
+  if [ ! -f $compressor/compressed_imagewoof/compressed.tfrecord ]; then
+    python compress_fixed.py --batchsize 32 \
+      --experiment $compressor \
+      --data_to_compress $DATASETS/imagewoof2_filtered \
+      --dataset_type imagenette \
+      --output_dir $compressor/compressed_imagewoof
+  fi
+
+  python evaluator_imagenette.py --batch_size 32 \
+    --uncompressed_dataset $DATASETS/imagewoof2_filtered \
+    --downstream_O_model $EXPERIMENT_DIR/imagenette_classifiers/imagewoof2_filtered/final_model.hdf5 \
+    --compressed_dataset_2 $compressor/compressed_imagewoof/compressed.tfrecord \
+    --compressed_dataset_2_type tfrecords \
+    --output_dir $output_dir
+done
+
+# imagewoof BPG O2C
+for bpg_dataset in $DATASETS/imagewoof2_filtered_bpg/*/; do
+  output_dir="$EVALUATION_DIR/imagewoof_r18/bpg/$(basename $bpg_dataset)"
+  echo "Processing $output_dir."
+  echo $bpg_dataset
+
+  if [ -f $output_dir/results.csv ]; then
+    echo "Skipping: results.csv exists."
+    continue
+  fi
+
+  python evaluator_imagenette.py --batch_size 128 \
+    --uncompressed_dataset $DATASETS/imagewoof2_filtered \
+    --downstream_O_model $EXPERIMENT_DIR/imagenette_classifiers/imagewoof2_filtered/final_model.hdf5 \
+    --compressed_dataset_2 $bpg_dataset \
+    --compressed_dataset_2_type files \
+    --output_dir $output_dir
+done
+

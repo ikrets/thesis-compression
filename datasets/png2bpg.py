@@ -24,5 +24,8 @@ for img_name in tqdm(dataset):
             Path(img_name.replace(args.dataset, target_dir(qp, cfmt))).parent.mkdir(parents=True, exist_ok=True)
             target_name = img_name.replace('.png', '.bpg').replace(args.dataset,
                                                                    target_dir(qp, cfmt))
-            subprocess.Popen(split(f'bpgenc -q {qp} -f {cfmt} -o {target_name} {img_name}'))
+            p = subprocess.Popen(split(f'bpgenc -q {qp} -f {cfmt} -o {target_name} {img_name}'))
+            p.wait()
+            if p.returncode != 0:
+                tqdm.write(f'Problem with {img_name}!')
             subprocess.Popen(split(f'bpgdec -o {target_name.replace(".bpg", ".png")} {target_name}'))

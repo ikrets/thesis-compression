@@ -20,28 +20,25 @@ args = parser.parse_args()
 input_dir = Path(args.input_dir)
 output_dir = Path(args.output_dir)
 output_dir.mkdir(parents=True, exist_ok=True)
+uncompressed_dataset = Path(args.uncompressed_dataset)
 
 save_experiment_params(output_dir, args)
 
 all_images = [p for p in input_dir.glob('*.png') if p.name[-8:] != '.mse.png']
 
-def image_panel(bpg_reconstruction, bpg_mse, bpg_activation_mse,
+
+def image_panel(original_img, bpg_reconstruction, bpg_mse, bpg_activation_mse,
                 compressor_reconstruction, compressor_mse, compressor_activation_mse):
-    fig, axes = plt.subplots(3, 2, figsize=(20, 20))
+    fig, axes = plt.subplots(2, 2, figsize=(20, 20))
 
     axes[0, 0].imshow(bpg_reconstruction)
     axes[0, 1].imshow(compressor_reconstruction)
 
-    axes[1, 0].imshow(bpg_mse.astype(np.float32) / 2**16, norm=colors.Normalize(0, 1))
-    axes[1, 1].imshow(compressor_mse.astype(np.float32) / 2**16, norm=colors.Normalize(0, 1))
+    diff_mse = (compressor_mse - bpg_mse) / 2**16
+    max_diff = np.max(np.abs(diff_mse))
 
-    def draw_activation(ax, activation_mse):
-        am = Image.fromarray(activation_mse).resize((256, 256), Image.BICUBIC)
-        am = np.array(am).astype(np.float32) / 2**16
-        ax.imshow(am, norm=colors.Normalize(0, 1))
-
-    draw_activation(axes[2, 0], bpg_activation_mse)
-    draw_activation(axes[2, 1], compressor_activation_mse)
+    axes[1, 0].imshow(diff_mse, cmap='bwr', norm=colors.Normalize(-max_diff, max_diff))
+    axes[1, 1].imshow(original_img)
 
     for a in axes.ravel():
         a.axis('off')
@@ -70,13 +67,15 @@ def get_images(names):
     return reconstructions, mses, activation_mses
 
 
+original_image = Image.open(
+    uncompressed_dataset / 'val' / input_dir.name.split('_')[0] / '{}.png'.format(input_dir.name))
 bpg_examples = get_full_names(['bpg_qp_{}'.format(qp) for qp in args.bpg_qps])
 compressor_examples = get_full_names(['{}_alpha_{}'.format(args.compressor, a) for a in args.compressor_alphas])
 bpg_reconstructions, bpg_mses, bpg_activation_mses = get_images(bpg_examples)
 compressor_reconstructions, compressor_mses, compressor_activation_mses = get_images(compressor_examples)
 
 for i in range(3):
-    fig = image_panel(bpg_reconstructions[i], bpg_mses[i], bpg_activation_mses[i],
+    fig = image_panel(original_image, bpg_reconstructions[i], bpg_mses[i], bpg_activation_mses[i],
                       compressor_reconstructions[i], compressor_mses[i], compressor_activation_mses[i])
     fig.savefig(output_dir / 'panel_{}.pdf'.format(i))
     plt.close(fig)

@@ -105,7 +105,7 @@ for image_name in image_names:
 
 
     def write_mse(reconstruction_img, name):
-        mse_img = tf.reduce_max(tf.math.squared_difference(reconstruction_img, original_img), axis=-1, keepdims=True)
+        mse_img = tf.reduce_mean(tf.math.squared_difference(reconstruction_img, original_img), axis=-1, keepdims=True)
         mse_img = tf.saturate_cast(mse_img * 2 ** 16, tf.uint16)
         mse_img_name = tf.strings.regex_replace(name, '.png', '.mse.png')
         tf.io.write_file(mse_img_name, tf.image.encode_png(mse_img))
