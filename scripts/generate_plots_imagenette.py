@@ -17,7 +17,7 @@ output_dir = Path(args.output_dir)
 output_dir.mkdir(parents=True, exist_ok=True)
 save_experiment_params(output_dir, args)
 
-sns.set(context='paper')
+sns.set(context='paper', font_scale=1.4)
 
 combined_df = pd.read_csv(args.combined_csv)
 combined_df = combined_df[combined_df.dataset.isin(['imagenette', 'imagewoof'])]
@@ -36,7 +36,7 @@ for (dataset, compressor), df in samearc_grouped:
 
     _, axes = plt.subplots(1, 3 if compressor != 'bpg' else 2, figsize=(3.3 * (3 if compressor != 'bpg' else 2), 3.5))
 
-    axes[0].axhline(y=o2o_accuracy, label='o2o accuracy', color='turquoise', linestyle='--')
+    axes[0].axhline(y=o2o_accuracy, label='O2O accuracy', color='turquoise', linestyle='--')
     sns.lineplot(data=df, x='bpp_2', y='o2c_accuracy', ax=axes[0])
     axes[0].set_ylim(top=1.01 * o2o_accuracy)
 
@@ -51,30 +51,44 @@ for (dataset, compressor), df in samearc_grouped:
     plt.savefig(target_file)
     plt.close()
 
+relabel = {
+    'activation_7_hyperprior': 'Perceptual, block3',
+    'bpg': 'BPG baseline'
+}
 for dataset, df in combined_df.groupby(['dataset']):
     o2o_accuracy = vars(args)[f'o2o_accuracy_{dataset}']
     _, axes = plt.subplots(1, 2, figsize=(10, 3.5))
-    axes[0].axhline(y=1, label='o2o accuracy', color='turquoise', linestyle='--')
-    sns.lineplot(x=df.bpp_2, y=df['o2c_accuracy'] / o2o_accuracy,
-                 hue=df.compressor, ax=axes[0])
+    g = sns.lineplot(x=df.bpp_2, y=df['o2c_accuracy'] / o2o_accuracy,
+                 hue=df.compressor, ax=axes[0], marker='o')
+    for t in g.legend().texts:
+        text = t.get_text()
+        if text in relabel:
+            t.set_text(relabel[text])
+
     axes[0].set_title('o2c accuracy')
-    axes[0].set_ylabel('% of o2o accuracy')
+    axes[0].set_xlabel('bpp')
+    axes[0].set_ylabel('% of O2O accuracy')
     sec_ax = axes[0].secondary_yaxis('right',
                                      functions=(lambda x: x * o2o_accuracy,
                                                 lambda y: y / o2o_accuracy))
-    sec_ax.set_ylabel('o2c accuracy value')
+    sec_ax.set_ylabel('O2C accuracy')
 
-    sns.lineplot(x=df.bpp_2, y=df.mse_2, hue=df.compressor, ax=axes[1])
+    g = sns.lineplot(x=df.bpp_2, y=df.mse_2, hue=df.compressor, ax=axes[1], marker='o')
+    for t in g.legend().texts:
+        text = t.get_text()
+        if text in relabel:
+            t.set_text(relabel[text])
+    axes[1].set(xlabel='bpp', ylabel='Reconstruction MSE')
 
     if dataset == 'imagenette':
-        axes[0].set_xbound(0.10, 0.27)
+        axes[0].set_xbound(0.10, 0.28)
         axes[0].set_ybound(0.75, 1.02)
-        axes[1].set_xbound(0.10, 0.27)
+        axes[1].set_xbound(0.10, 0.28)
         axes[1].set_ybound(0.001, 0.0045)
     if dataset == 'imagewoof':
-        axes[0].set_xbound(0.10, 0.27)
+        axes[0].set_xbound(0.10, 0.28)
         axes[0].set_ybound(0.75, 1.02)
-        axes[1].set_xbound(0.10, 0.27)
+        axes[1].set_xbound(0.10, 0.28)
         axes[1].set_ybound(0.001, 0.0045)
 
 

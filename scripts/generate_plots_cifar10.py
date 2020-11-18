@@ -2,6 +2,7 @@ import argparse
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 from pathlib import Path
 
 from experiment import save_experiment_params
@@ -16,7 +17,7 @@ output_dir = Path(args.output_dir)
 output_dir.mkdir(parents=True, exist_ok=True)
 save_experiment_params(output_dir, args)
 
-sns.set(context='paper')
+sns.set(context='paper', font_scale=1.4)
 
 o2o_values = {architecture: float(value) for architecture, value in args.o2o_accuracy}
 
@@ -37,24 +38,44 @@ samearc_df = combined_df[combined_df.architecture_O == combined_df.architecture_
 # 1. Each compressor separately
 samearc_grouped = samearc_df.groupby(['architecture_O', 'compressor'])
 for (architecture, compressor), df in samearc_grouped:
+    df = df.loc[(df.bpp_1 > 0.4) & (df.bpp_1 < 2.2)].copy()
     if compressor != 'bpg':
         df['alpha'] = df.compressor_param.apply(lambda s: float(s.split('_')[1]))
     value_vars = ['o2c_accuracy', 'c2o_accuracy', 'c2c_accuracy']
     df = df.melt(id_vars=[c for c in set(df.columns).difference(value_vars)],
                  value_vars=value_vars,
-                 value_name='accuracy value',
-                 var_name='accuracy type')
+                 value_name='Accuracy value',
+                 var_name='Evaluation setup')
 
     _, axes = plt.subplots(1, 3 if compressor != 'bpg' else 2, figsize=(3.3 * (3 if compressor != 'bpg' else 2), 3.5))
 
-    axes[0].axhline(y=o2o_values[architecture], label='o2o accuracy', color='turquoise', linestyle='--')
-    sns.lineplot(data=df, x='bpp_1', y='accuracy value', hue='accuracy type', ax=axes[0])
-    axes[0].set_ylim(top=1.01 * o2o_values[architecture])
+    axes[0].axhline(y=o2o_values[architecture], label='O2O accuracy', color='turquoise', linestyle='--')
+    g = sns.lineplot(data=df, x='bpp_1', y='Accuracy value', hue='Evaluation setup', ax=axes[0], marker='o')
+    axes[0].set_ylim(bottom=0.63 if architecture == 'resnet18' else 0.68,
+                     top=1.01 * o2o_values[architecture])
+    axes[0].set_xlim(left=0.5, right=2.2)
+    axes[0].set(xlabel='bpp')
+    relabel = {'o2c_accuracy': 'O2C',
+               'c2o_accuracy': 'C2O',
+               'c2c_accuracy': 'C2C'}
+    for t in g.legend().texts:
+        text = t.get_text()
+        if text in relabel:
+            t.set_text(relabel[text])
 
-    sns.lineplot(data=df, x='bpp_1', y='mse_1', ax=axes[1])
+    sns.lineplot(data=df, x='bpp_1', y='mse_1', ax=axes[1], marker='o')
+    axes[1].set(xlabel='bpp', ylabel='Reconstruction MSE')
+    axes[1].set_xlim(left=0.5, right=2.2)
+    axes[1].set_ylim(bottom=0.00025, top=0.006)
 
     if compressor != 'bpg':
-        sns.lineplot(data=df, x='alpha', y='bpp_1', ax=axes[2])
+        sns.lineplot(data=df, x='alpha', y='bpp_1', ax=axes[2], marker='o')
+        axes[2].set(xlabel=r'$\alpha$', ylabel='bpp')
+        axes[2].set_ylim(bottom=0.5, top=2.2)
+        formatter = ticker.ScalarFormatter()
+        formatter.set_scientific(True)
+        formatter.set_powerlimits((-2, 2))
+        axes[2].xaxis.set_major_formatter(formatter)
 
     target_file = output_dir / 'separate_compressor' / architecture / 'compressor_{}.pdf'.format(compressor)
     target_file.parent.mkdir(parents=True, exist_ok=True)
@@ -64,19 +85,45 @@ for (architecture, compressor), df in samearc_grouped:
 
 # 2. All compressors combined, each evaluation type separately
 samearc_grouped = samearc_df.groupby('architecture_O')
+rename_losses = {
+    'act_3_norm': 'Perceptual, block2',
+    'act_7_norm': 'Perceptual, block3',
+    'act_11_norm': 'Perceptual, block4',
+    'block2_conv2': 'Perceptual, block2',
+    'block3_conv3': 'Perceptual, block3',
+    'block4_conv3': 'Perceptual, block4',
+    'block2_conv2 block3_conv3 block4_conv3': 'Perceptual, blocks 2-4',
+    'bpg': 'BPG baseline',
+    'combined_act_3_7_11': 'Perceptual, blocks 2-4',
+    'prediction_crossentropy': 'Prediction cross-entropy',
+    'task_crossentropy': 'Task cross-entropy'
+}
+losses_order = ['Perceptual, block2', 'Perceptual, block3', 'Perceptual, block4',
+                'Perceptual, blocks 2-4', 'Prediction cross-entropy', 'Task cross-entropy',
+                'BPG baseline']
 for accuracy_type in ['o2c_accuracy', 'c2o_accuracy', 'c2c_accuracy']:
-    _, axes = plt.subplots(1, 2, figsize=(10, 3.5))
+    _, axes = plt.subplots(2, 1, figsize=(10, 12))
     for i, (architecture, df) in enumerate(samearc_grouped):
-        sns.lineplot(x=df.bpp_1, y=df[accuracy_type] / o2o_values[architecture],
-                     hue=df.compressor, ax=axes[i])
-        axes[i].set_title(architecture)
-        axes[i].set_ylabel('% of o2o accuracy')
+        rename_losses_inv = {v: k for k, v in rename_losses.items() if k in df.compressor.unique()}
+        hue_order = [rename_losses_inv[v] for v in losses_order]
+
+        g = sns.lineplot(x=df.bpp_1, y=df[accuracy_type] / o2o_values[architecture],
+                     hue=df.compressor, hue_order=hue_order, ax=axes[i], marker='o')
+        rename_architecture = {'vgg16': 'VGG16', 'resnet18': 'Resnet18'}
+        axes[i].set_title(f'{rename_architecture[architecture]} architecture')
+        axes[i].set(xlabel='bpp', ylabel='% of O2O accuracy')
+        for t in g.legend().texts:
+            text = t.get_text()
+            if text in rename_losses:
+                t.set_text(rename_losses[text])
+
         sec_ax = axes[i].secondary_yaxis('right',
                                          functions=(lambda x, architecture=architecture: x * o2o_values[architecture],
                                                     lambda y, architecture=architecture: y / o2o_values[architecture]))
-        sec_ax.set_ylabel('{} value'.format(accuracy_type))
+        rename = lambda s: f'{s[:3].upper()} accuracy value'
+        sec_ax.set_ylabel(rename(accuracy_type))
 
-        axes[i].set_xbound(0.5, 2.1)
+        axes[i].set_xbound(0.5, 2.2)
         if accuracy_type == 'o2c_accuracy':
             axes[i].set_ybound(0.67, 1)
         elif accuracy_type == 'c2o_accuracy':
@@ -97,27 +144,44 @@ best_performing = {
     'vgg16': 'block3_conv3',
     'resnet18': 'act_11_norm'
 }
-_, axes = plt.subplots(1, 2, figsize=(10, 3.5))
+_, axes = plt.subplots(2, 1, figsize=(10, 12))
 
 for i, (architecture, df) in enumerate(crossarc_grouped):
     bpg_df = combined_df[(combined_df.compressor == 'bpg') & (combined_df.architecture_O == architecture)]
     best_performing_df = combined_df[(combined_df.compressor == best_performing[architecture])
                                      & (combined_df.architecture_O == architecture) & (
                                              combined_df.architecture_C == architecture)].copy()
-    best_performing_df['compressor'] = '{} (best performing)'.format(best_performing[architecture])
-    df = pd.concat([df, bpg_df, best_performing_df])
-    df.loc[df.compressor == 'bpg', 'compressor'] = 'bpg (baseline)'
+    if architecture == 'vgg16':
+        best_performing_compressor = 'Best performing VGG16 O2C (Perceptual, block4)'
+    else:
+        best_performing_compressor = 'Best performing Resnet18 O2C (Perceptual, block3)'
+    best_performing_df['compressor'] = best_performing_compressor
 
-    sns.lineplot(x=df.bpp_2, y=df['o2c_accuracy'] / o2o_values[architecture],
-                 hue=df.compressor, ax=axes[i])
+    df = pd.concat([df, bpg_df, best_performing_df])
+
+    rename_losses_inv = {v: k for k, v in rename_losses.items() if k in df.compressor.unique()}
+    hue_order = [rename_losses_inv[v] for v in losses_order] + [best_performing_compressor]
+
+    g = sns.lineplot(x=df.bpp_2, y=df['o2c_accuracy'] / o2o_values[architecture],
+                 hue=df.compressor, hue_order=hue_order, ax=axes[i],
+                 marker='o')
+
+    for t in g.legend().texts:
+        text = t.get_text()
+        if text in rename_losses:
+            t.set_text(rename_losses[text])
+
     sec_ax = axes[i].secondary_yaxis('right',
                                      functions=(lambda x, a=architecture: x * o2o_values[a],
                                                 lambda y, a=architecture: y / o2o_values[a]))
-    sec_ax.set_ylabel('value')
-    axes[i].set_ylabel('% of o2o accuracy')
-    axes[i].set_title('{} O model evaluated on {} C data'.format(
-        architecture, 'vgg16' if architecture == 'resnet18' else 'resnet18'))
-    axes[i].set_xbound(0.5, 2.5)
+    sec_ax.set_ylabel('O2C accuracy')
+    axes[i].set_xlabel('bpp')
+    axes[i].set_ylabel('% of O2O accuracy')
+    if architecture == 'vgg16':
+        axes[i].set_title('VGG16 O model evaluated on Resnet18 C data')
+    else:
+        axes[i].set_title('Resnet18 O model evaluated on VGG16 C data')
+    axes[i].set_xbound(0.5, 2.2)
     axes[i].set_ybound(0.75, 1)
 
 target_file = output_dir / 'cross_architecture' / 'o2c.pdf'

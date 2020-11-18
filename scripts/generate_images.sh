@@ -1,6 +1,6 @@
 #!/bin/bash
 
-S3_PATH=$HOME/thesis-compression-s3
+S3_PATH=/media/ilya/TOSHIBAEXT/thesis-compression-s3
 
 export PYTHONPATH=.
 
