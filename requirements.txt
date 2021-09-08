@@ -80,7 +80,7 @@ pathspec==0.7.0
 pbr==5.4.4
 pexpect==4.7.0
 pickleshare==0.7.5
-Pillow==6.2.1
+Pillow==8.3.2
 prettytable==0.7.2
 prometheus-client==0.7.1
 prompt-toolkit==3.0.2
