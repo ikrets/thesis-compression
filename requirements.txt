@@ -68,7 +68,7 @@ notebook==6.0.2
 numpy==1.17.4
 objgraph==3.4.1
 omegaconf==2.0.1rc11
-opencv-python==4.1.2.30
+opencv-python==4.2.0.32
 opt-einsum==3.1.0
 optional-django==0.1.0
 optuna==2.0.0
