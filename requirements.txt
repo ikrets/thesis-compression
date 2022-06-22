@@ -65,7 +65,7 @@ nbconvert==5.6.1
 nbformat==4.4.0
 networkx==2.4
 notebook==6.0.2
-numpy==1.17.4
+numpy==1.22.0
 objgraph==3.4.1
 omegaconf==2.0.1rc11
 opencv-python==4.1.2.30
